@@ -6,7 +6,7 @@ extern crate nom;
 
 mod parser;
 mod w;
-// mod desugar;
+mod desugar;
 // mod simple;
 // use simple::Expr;
 // mod lambda;
@@ -33,8 +33,9 @@ fn main() {
                     .map_err(|e| {println!("{:?}", e); "Parse Error"}))
                 //.and_then(Expr::new)
                 //.and_then(|e| Value::eval(e))
-                .map_err(String::from)
-                .and_then(|e| {run_infer(&e).map_err(|e| format!("{:?}", e))} )
+                //.map_err(String::from)
+                //.and_then(|e| {run_infer(&e).map_err(|e| format!("{:?}", e))} )
+                .map(desugar::desugar)
         })
         .map(|e| println!("{:?}", e))
         .last();
