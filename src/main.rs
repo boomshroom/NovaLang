@@ -6,26 +6,26 @@ extern crate nom;
 
 mod parser;
 mod w;
-//mod simple;
-//use simple::Expr;
-//mod lambda;
-//use lambda::Expr;
+// mod desugar;
+// mod simple;
+// use simple::Expr;
+// mod lambda;
+// use lambda::Expr;
 use parser::Node;
-//use types::TypeEnv;
-//mod eval;
-//use eval::Value;
+// use types::TypeEnv;
+// mod eval;
+// use eval::Value;
 use w::run_infer;
 
-//use parser::parse;
+// use parser::parse;
 
-//const SRC: &'static str = "True + False";
+// const SRC: &'static str = "True + False";
 
 fn main() {
     parser::test_lambda();
     parser::test_exprs();
     let stdin = stdin();
-    stdin
-        .lock()
+    stdin.lock()
         .lines()
         .map(|l| {
             l.map_err(|_| "Read Error.")

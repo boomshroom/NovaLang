@@ -4,7 +4,7 @@ use nom::{IResult, IError, digit, alphanumeric};
 #[derive(Debug, PartialEq, Clone)]
 pub enum Node {
     Lit(Literal),
-    //BinOp(Op, Box<Node>, Box<Node>),
+    // BinOp(Op, Box<Node>, Box<Node>),
     Op(Op),
     FunCall(Box<Node>, Box<Node>),
     Ident(String),
@@ -85,7 +85,7 @@ named!(pub space, eat_separator!(&b" \t"[..]));
 macro_rules! ws_nl (
   ($i:expr, $($args:tt)*) => (
     {
-      //use $crate::space;
+// use $crate::space;
       sep!($i, space, $($args)*)
     }
   )
@@ -110,14 +110,11 @@ fn parse_bin_expr_full(src: &[u8], prec: i64, lhs: Node) -> IResult<&[u8], Node>
     };
     if tok.prec() > prec {
         let (i2, right) = try_parse!(i1, ws_nl!(apply!(parse_bin_expr, tok.prec())));
-        parse_bin_expr_full(
-            i2,
-            prec,
-            Node::FunCall(
-                Box::new(Node::FunCall(Box::new(Node::Op(tok)), Box::new(lhs))),
-                Box::new(right),
-            ),
-        )
+        parse_bin_expr_full(i2,
+                            prec,
+                            Node::FunCall(Box::new(Node::FunCall(Box::new(Node::Op(tok)),
+                                                                 Box::new(lhs))),
+                                          Box::new(right)))
     } else {
         IResult::Done(src, lhs)
     }
@@ -193,7 +190,8 @@ named!(constr_pattern<Pattern>, map!(
 ));
 
 named!(pattern_atom<Pattern>, alt_complete!(
-    map!(tag!("_"), |_| Pattern::Wild) | map!(ident, Pattern::Ident) | map!(literal, Pattern::Lit)| tuple_pattern));
+    map!(tag!("_"), |_| Pattern::Wild) | map!(ident, Pattern::Ident) |
+    map!(literal, Pattern::Lit)| tuple_pattern));
 named!(pattern<Pattern>, alt_complete!(constr_pattern | pattern_atom));
 
 named!(let_binding<(Pattern, Node)>, ws_nl!(do_parse!(
@@ -303,10 +301,9 @@ pub fn test_exprs() {
     println!("{:?}", defn(b"map f = f").unwrap());
     println!("");
 }
-/*
-pub fn parse(src: &str) -> IResult<&[u8], Node> {
-    //funcall(src.as_bytes())
-    //parse_expr(src.as_bytes(), 0)
-    let_expr(src.trim().as_bytes())
-}
-*/
+// pub fn parse(src: &str) -> IResult<&[u8], Node> {
+// funcall(src.as_bytes())
+// parse_expr(src.as_bytes(), 0)
+// let_expr(src.trim().as_bytes())
+// }
+//
