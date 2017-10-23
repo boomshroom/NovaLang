@@ -267,7 +267,7 @@ fn instantiate(s: &Scheme, next: &mut TId) -> (TypeInfo, Type) {
         &Scheme::Type(ref t) => (TypeInfo::new(), t.clone()),
         &Scheme::Forall(ref t, ref v) => {
             println!("{:?} {{{:?}}}", t, v);
-            let (s, c) : (_, HashMap<_, _>) = v.iter()
+            let (s, c): (_, HashMap<_, _>) = v.iter()
                 .map(|&(ref t, ref cls)| {
                     let id = next.next_id();
                     ((t.clone(), Type::Free(id)), (id, cls.clone()))
@@ -278,7 +278,10 @@ fn instantiate(s: &Scheme, next: &mut TId) -> (TypeInfo, Type) {
                 constr: c.clone(),
             };
             let t = t.clone().apply(&info);
-            let info = TypeInfo{subst: HashMap::new(), constr: c.into_iter().map(|(id, c)| (id, c.apply(&info))).collect()};
+            let info = TypeInfo {
+                subst: HashMap::new(),
+                constr: c.into_iter().map(|(id, c)| (id, c.apply(&info))).collect(),
+            };
 
             (info, t)
         }
@@ -474,14 +477,14 @@ fn infer(n: &Node, env: &mut TypeEnv, next: &mut TId) -> Result<(TypeInfo, Type)
                             .ok_or(TypeError::Unbound(i))
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let (infos, ts) : (Vec<_>, Vec<_>) = schemes.into_iter().unzip();
+                let (infos, ts): (Vec<_>, Vec<_>) = schemes.into_iter().unzip();
                 let info = infos.into_iter().fold(s, |i1, i2| i1.compose(i2));
                 let ts = ts.into_iter().map(|t| t.apply(&info)).collect();
                 let t = Type::Closure(Box::new(new_id.apply(&info)), Box::new(t), ts);
 
                 Ok((info, t))
             }
-        },
+        }
         &Node::FunCall(ref f, ref a) => {
             let err = |e| TypeError::Wrapped(Node::FunCall(f.clone(), a.clone()), Box::new(e));
             (|f, a| {
