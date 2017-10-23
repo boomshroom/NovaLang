@@ -12,14 +12,16 @@ pub enum Node {
     If(Box<Node>, Box<Node>, Box<Node>),
     Tuple(Vec<Node>),
     Lambda(Pattern, Option<Type>, Box<Node>),
+    Match(Box<Node>, Vec<(Pattern, Node)>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Pattern {
     Ident(String),
     Lit(Literal),
-    Constructor(String, Box<Pattern>),
+    Constructor(String, Vec<Pattern>),
     Tuple(Vec<Pattern>),
+    Wild,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -46,6 +48,7 @@ pub enum Op {
     Sub,
     Mul,
     Div,
+    Equal,
 }
 
 #[derive(Debug)]
@@ -59,8 +62,9 @@ impl Op {
     fn prec(self) -> i64 {
         use self::Op::*;
         match self {
-            Add | Sub => 1,
-            Mul | Div => 2,
+            Add | Sub => 2,
+            Mul | Div => 3,
+            Equal => 1,
         }
     }
 }
@@ -120,7 +124,7 @@ fn parse_bin_expr_full(src: &[u8], prec: i64, lhs: Node) -> IResult<&[u8], Node>
 }
 
 named!(keyword<&str>, map_res!(alt_complete!(
-    tag!("let") | tag!("in") | tag!("if") | tag!("then") | tag!("else")
+    tag!("let") | tag!("in") | tag!("if") | tag!("then") | tag!("else") | tag!("case") | tag!("of")
 ), str::from_utf8));
 named!(builtin_type<Type>, switch!(alphanumeric,
 	b"Int" => value!(Type::Int) |
@@ -161,8 +165,9 @@ named!(addop<Op>, value!(Op::Add, tag!("+")));
 named!(subop<Op>, value!(Op::Sub, tag!("-")));
 named!(mulop<Op>, value!(Op::Mul, tag!("*")));
 named!(divop<Op>, value!(Op::Div, tag!("/")));
+named!(eqop<Op>, value!(Op::Equal, tag!("==")));
 
-named!(binop<Op>, alt_complete!(addop | subop | mulop | divop));
+named!(binop<Op>, alt_complete!(addop | subop | mulop | divop | eqop));
 named!(op_fun<Node>, delimited!( tag!("("), map!(binop, Node::Op), tag!(")")));
 
 named!(funcall<Node>, fold_many1!( ws_nl!(apply!(parse_bin_expr, 0)),
@@ -183,12 +188,12 @@ named!(tuple_pattern<Pattern>, map!(ws_nl!(delimited!(
 }));
 
 named!(constr_pattern<Pattern>, map!(
-    ws_nl!(tuple!(ident, pattern_atom)),
-    |(c, v)| Pattern::Constructor(c, Box::new(v))
+    ws_nl!(tuple!(ident, many0!(pattern_atom))),
+    |(c, v)| Pattern::Constructor(c, v)
 ));
 
 named!(pattern_atom<Pattern>, alt_complete!(
-    map!(ident, Pattern::Ident) | map!(literal, Pattern::Lit)| tuple_pattern));
+    map!(tag!("_"), |_| Pattern::Wild) | map!(ident, Pattern::Ident) | map!(literal, Pattern::Lit)| tuple_pattern));
 named!(pattern<Pattern>, alt_complete!(constr_pattern | pattern_atom));
 
 named!(let_binding<(Pattern, Node)>, ws_nl!(do_parse!(
@@ -216,6 +221,19 @@ named!(if_expr<Node>, ws!(do_parse!(
 	(Node::If(Box::new(c), Box::new(t), Box::new(f)))
 )));
 
+named!(case_expr<Node>, ws_nl!(do_parse!(
+    tag!("case") >>
+    arg: expr >>
+    tag!("of") >>
+    cases: separated_list!(ws_nl!(eat_separator!("\n;")), do_parse!(
+        p: pattern >>
+        tag!("->") >>
+        val: expr >>
+        ((p, val))
+    )) >>
+    (Node::Match(Box::new(arg), cases))
+)));
+
 named!(lamdba<Node>, ws_nl!(do_parse!(
 	tag!("\\") >>
 	arg: pattern_atom >>
@@ -225,7 +243,7 @@ named!(lamdba<Node>, ws_nl!(do_parse!(
 	(Node::Lambda(arg, ty, Box::new(val)))
 )));
 
-named!(expr<Node>, alt_complete!(funcall | let_expr | if_expr | lamdba));
+named!(expr<Node>, alt_complete!(funcall | let_expr | if_expr | lamdba | case_expr));
 
 named!(tuple_type<Type>, delimited!( tag!("("), map!(ws!(
   separated_list!(tag!(","), type_expr)), |mut ts| match ts.len() {
@@ -264,7 +282,6 @@ pub fn test_lambda() {
         Node::Lambda(Pattern::Ident("x".into()),
             Some(Type::Int), Box::new(Node::Ident("x".into())))));
 }
-
 
 pub fn test_exprs() {
     println!("{:?}", expr(b"True").unwrap());
