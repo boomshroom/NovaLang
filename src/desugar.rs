@@ -1,6 +1,8 @@
 use super::parser::{Node, Pattern, Literal, Op};
 use std::iter;
 
+// use petgraph::graph::Graph;
+
 #[derive(Debug)]
 pub enum NodeDS {
     Lit(i64),
@@ -44,7 +46,7 @@ impl Counter {
 }
 
 fn tuple_fn(len: usize) -> String {
-    iter::once(',').cycle().take(len - 1).collect()
+    iter::repeat(',').take(len - 1).collect()
 }
 
 pub fn desugar(n: Node) -> NodeDS {
@@ -65,6 +67,7 @@ fn desugar_priv(n: Node, next: &mut Counter) -> NodeDS {
         Node::Ident(i) => NodeDS::Var(Arg::Ident(i)),
         Node::Let(binds, body) => {
             let n = desugar_priv(*body, next);
+            // let binds = binds.into_iter().rev().flat_map()
             binds.into_iter().rev().fold(n, |body, (p, b)| {
                 let p = if let Pattern::Tuple(args) = p {
                     Pattern::Constructor(tuple_fn(args.len()), args)
@@ -77,6 +80,7 @@ fn desugar_priv(n: Node, next: &mut Counter) -> NodeDS {
                     }
                     Pattern::Constructor(i, args) => {
                         if i.starts_with(char::is_lowercase) {
+                            // eta reduction.
                             let inner = args.into_iter()
                                 .rev()
                                 .fold(desugar_priv(b, next), |body, arg| match arg {
@@ -93,10 +97,10 @@ fn desugar_priv(n: Node, next: &mut Counter) -> NodeDS {
                                 });
                             NodeDS::Let(i, Box::new(inner), Box::new(body))
                         } else {
-
-
                             NodeDS::Match(Box::new(desugar_priv(b, next)),
-                                      vec![simplify_arm(Pattern::Constructor(i, args), body, next)])
+                                          vec![simplify_arm(Pattern::Constructor(i, args),
+                                                            body,
+                                                            next)])
                         }
                     }
                     Pattern::Wild => panic!("Can't assign to a wild card."),
@@ -172,6 +176,10 @@ fn simplify_arm(p: Pattern, n: NodeDS, next: &mut Counter) -> (Pat, NodeDS) {
         Pattern::Lit(Literal::True) => (Pat::Cons(String::from("True"), Vec::new()), n),
         Pattern::Lit(Literal::False) => (Pat::Cons(String::from("False"), Vec::new()), n),
         Pattern::Lit(Literal::Int(i)) => (Pat::Lit(i), n),
+        Pattern::Constructor(ref c, ref args) if c.starts_with(char::is_lowercase) &&
+                                                 args.len() == 0 => {
+            (Pat::Prim(Some(Arg::Ident(c.clone()))), n)
+        }
         Pattern::Constructor(c, args) => {
             let mut v = Vec::new();
             let new_args = args.clone()
@@ -180,6 +188,10 @@ fn simplify_arm(p: Pattern, n: NodeDS, next: &mut Counter) -> (Pat, NodeDS) {
                 .map(|(i, a)| match a {
                     Pattern::Wild => None,
                     Pattern::Ident(i) => Some(Arg::Ident(i)),
+                    Pattern::Constructor(ref i, ref a) if a.len() == 0 &&
+                                                          i.starts_with(char::is_lowercase) => {
+                        Some(Arg::Ident(i.clone()))
+                    }
                     p => {
                         let n = next.next();
                         v.push((i, n.clone()));
@@ -199,3 +211,72 @@ fn simplify_arm(p: Pattern, n: NodeDS, next: &mut Counter) -> (Pat, NodeDS) {
         }
     }
 }
+// fn bound_vars<'a>(p: &'a Pattern) -> HashSet<&'a str> {
+// match *p {
+// Pattern::Ident(ref i) => vec![i.as_str()],
+// Pattern::Wild | Pattern::Lit(_) => Vec::new(),
+// Pattern::Constructor(ref i, ref args) if i.starts_with(char::is_lowercase) => {
+// vec![i.as_str()]
+// }
+// Pattern::Constructor(ref args) |
+// Pattern::Tuple(ref args) => args.iter().flat_map(bound_vars).collect(),
+// }
+// }
+//
+// impl Pat {
+// fn bound_vars<'a>(p: &'a Pat) -> HashSet<&'a str> {
+// match *self {
+// Pat::Prim(Some(Arg::Ident(ref i))) => iter::once(i.as_str()).collect(),
+// Pat::Cons(_, args) => args.iter().flat_map(Pat::bound_vars).collect(),
+// _ => HashSet::new(),
+// }
+// }
+// }
+//
+// impl NodeDS {
+// fn free_vars<'a>(self: &'a NodeDS) -> HashSet<&'a str> {
+// match *self {
+// NodeDS::Lit(_) => HashSet::new(),
+// NodeDS::Var(ref i) => iter::once(i.as_str()).collect(),
+// NodeDS::Abs(ref i, ref e) => &e.free_vars() - &iter::once(i.as_str()).collect(),
+// NodeDS::App(ref f, ref p) => &f.free_vars() | &p.free_vars(),
+// NodeDS::Let(ref i, ref b, ref r) => {
+// &(&b.free_vars() | &r.free_vars()) - &iter::once(i.as_str()).collect()
+// }
+// NodeDS::Match(ref arg, ref arms) => {
+// &arg.free_vars() | (arms.iter().flat_map(|(p, a)| &a.free_vars() - &p.bound_vars()))
+// }
+// }
+// }
+// }
+//
+// fn merge_match(arg: NodeDS, e1: Vec<(Pat, NodeDS)>, e2: Vec<(Pat, NodeDS)>) -> Option<NodeDS> {
+// e1.append(e2);
+// Some(NodeDS::Match(Box::new(arg), e1))
+// }
+//
+// fn find_bind<'a>(i: &str, n: &'a NodeDS) -> Option<&'a NodeDS> {
+// match n {
+// l @ &NodeDS::Let(ref b, _, _) if b == i => Some(l),
+// &NodeDS::Let(_, _, ref b) => find_bind(i, b),
+// _ => None,
+// }
+// }
+//
+// fn topo_sort(arms: Vec<Pat, NodeDS>) -> Vec<Pat, NodeDS> {
+// let bound = arms.iter().map(|(p, n)| (p.bound_vars(), n.free_vars())).collect();
+// let deps = Graph::with_capacity(arms.len(), 0);
+// let idxs = bound.into_iter().map(|n| deps.add_node()).collect();
+// for f_idx in idxs.iter() {
+// let &(_, ref f) = &deps[i];
+// for b_idx in idxs.iter() {
+// let &(ref b, _) = &deps[j];
+// if !f.is_disjoint(b) {
+// deps.add_edge(f_idx, b_idx, ())
+// }
+// }
+// }
+//
+//
+// }
+//

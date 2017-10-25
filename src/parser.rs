@@ -143,6 +143,7 @@ named!(literal<Literal>, alt_complete!(int | bool_lit));
 
 named!(ident<String>, do_parse!(
 	not!(reserved) >>
+    not!(int) >>
 	i: map!(map_res!(alphanumeric, str::from_utf8), String::from) >>
 	(i)
 ));
@@ -190,8 +191,8 @@ named!(constr_pattern<Pattern>, map!(
 ));
 
 named!(pattern_atom<Pattern>, alt_complete!(
-    map!(tag!("_"), |_| Pattern::Wild) | map!(ident, Pattern::Ident) |
-    map!(literal, Pattern::Lit)| tuple_pattern));
+    map!(tag!("_"), |_| Pattern::Wild) | map!(literal, Pattern::Lit) |
+    map!(ident, Pattern::Ident) | tuple_pattern));
 named!(pattern<Pattern>, alt_complete!(constr_pattern | pattern_atom));
 
 named!(let_binding<(Pattern, Node)>, ws_nl!(do_parse!(
