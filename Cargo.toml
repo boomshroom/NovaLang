@@ -5,3 +5,5 @@ authors = ["Angelo Bulfone <mbulfone@gmail.com>"]
 
 [dependencies]
 nom = "3.2.0"
+petgraph = "0.4.10"
+llvm-sys = "50.0.0"
