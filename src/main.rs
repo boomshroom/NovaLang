@@ -5,8 +5,9 @@ use std::io::{stdin, BufRead};
 extern crate nom;
 
 mod parser;
-mod w;
+// mod w;
 mod desugar;
+mod w_ds;
 // mod simple;
 // use simple::Expr;
 // mod lambda;
@@ -15,7 +16,7 @@ use parser::Node;
 // use types::TypeEnv;
 // mod eval;
 // use eval::Value;
-use w::run_infer;
+// use w::run_infer;
 
 // use parser::parse;
 
@@ -34,8 +35,11 @@ fn main() {
                 //.and_then(Expr::new)
                 //.and_then(|e| Value::eval(e))
                 //.map_err(String::from)
-                //.and_then(|e| {run_infer(&e).map_err(|e| format!("{:?}", e))} )
+                //.and_then(|e| {w::run_infer(&e).map_err(|e| format!("{:?}", e))} )
                 .map(desugar::desugar)
+                .map_err(String::from)
+                .map(|n| {println!("{:?}", n);n})
+                .and_then(|e| {w_ds::run_infer(&e).map_err(|e| format!("{:?}", e))} )
         })
         .map(|e| println!("{:?}", e))
         .last();

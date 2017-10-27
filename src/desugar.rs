@@ -1,9 +1,11 @@
 use super::parser::{Node, Pattern, Literal, Op};
 use std::iter;
+use std::collections::HashSet;
+use std::hash::Hash;
 
 // use petgraph::graph::Graph;
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum NodeDS {
     Lit(i64),
     Var(Arg),
@@ -13,14 +15,14 @@ pub enum NodeDS {
     Match(Box<NodeDS>, Vec<(Pat, NodeDS)>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Pat {
     Prim(Option<Arg>),
     Lit(i64),
     Cons(String, Vec<Option<Arg>>),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Arg {
     Ident(String),
     Internal(u64),
@@ -211,45 +213,52 @@ fn simplify_arm(p: Pattern, n: NodeDS, next: &mut Counter) -> (Pat, NodeDS) {
         }
     }
 }
-// fn bound_vars<'a>(p: &'a Pattern) -> HashSet<&'a str> {
-// match *p {
-// Pattern::Ident(ref i) => vec![i.as_str()],
-// Pattern::Wild | Pattern::Lit(_) => Vec::new(),
-// Pattern::Constructor(ref i, ref args) if i.starts_with(char::is_lowercase) => {
-// vec![i.as_str()]
-// }
-// Pattern::Constructor(ref args) |
-// Pattern::Tuple(ref args) => args.iter().flat_map(bound_vars).collect(),
-// }
-// }
-//
-// impl Pat {
-// fn bound_vars<'a>(p: &'a Pat) -> HashSet<&'a str> {
-// match *self {
-// Pat::Prim(Some(Arg::Ident(ref i))) => iter::once(i.as_str()).collect(),
-// Pat::Cons(_, args) => args.iter().flat_map(Pat::bound_vars).collect(),
-// _ => HashSet::new(),
-// }
-// }
-// }
-//
-// impl NodeDS {
-// fn free_vars<'a>(self: &'a NodeDS) -> HashSet<&'a str> {
-// match *self {
-// NodeDS::Lit(_) => HashSet::new(),
-// NodeDS::Var(ref i) => iter::once(i.as_str()).collect(),
-// NodeDS::Abs(ref i, ref e) => &e.free_vars() - &iter::once(i.as_str()).collect(),
-// NodeDS::App(ref f, ref p) => &f.free_vars() | &p.free_vars(),
-// NodeDS::Let(ref i, ref b, ref r) => {
-// &(&b.free_vars() | &r.free_vars()) - &iter::once(i.as_str()).collect()
-// }
-// NodeDS::Match(ref arg, ref arms) => {
-// &arg.free_vars() | (arms.iter().flat_map(|(p, a)| &a.free_vars() - &p.bound_vars()))
-// }
-// }
-// }
-// }
-//
+fn bound_vars<'a>(p: &'a Pattern) -> HashSet<&'a str> {
+    match *p {
+        Pattern::Ident(ref i) => iter::once(i.as_str()).collect(),
+        Pattern::Wild | Pattern::Lit(_) => HashSet::new(),
+        Pattern::Constructor(ref i, ref args) if i.starts_with(char::is_lowercase) => {
+            iter::once(i.as_str()).collect()
+        }
+        Pattern::Constructor(_, ref args) |
+        Pattern::Tuple(ref args) => args.iter().flat_map(bound_vars).collect(),
+    }
+}
+
+impl Pat {
+    pub fn bound_vars<'a>(&'a self) -> HashSet<&'a Arg> {
+        match *self {
+            Pat::Prim(Some(ref i)) => iter::once(i).collect(),
+            Pat::Cons(_, ref args) => args.iter().flat_map(Option::iter).collect(),
+            _ => HashSet::new(),
+        }
+    }
+}
+
+fn without<'a, T: Hash + Eq>(s: HashSet<&'a T>, t: T) -> HashSet<&'a T> {
+    let mut s = s;
+    s.remove(&t);
+    s
+}
+
+impl NodeDS {
+    pub fn free_vars<'a>(&'a self) -> HashSet<&'a Arg> {
+        match *self {
+            NodeDS::Lit(_) => HashSet::new(),
+            NodeDS::Var(ref i) => iter::once(i).collect(),
+            NodeDS::Abs(ref i, ref e) => &e.free_vars() - &i.iter().collect(),
+            NodeDS::App(ref f, ref p) => &f.free_vars() | &p.free_vars(),
+            NodeDS::Let(ref i, ref b, ref r) => {
+                &b.free_vars() | &without(r.free_vars(), Arg::Ident(i.clone()))
+            }
+            NodeDS::Match(ref arg, ref arms) => {
+                &arg.free_vars() |
+                &(arms.iter().flat_map(|&(ref p, ref a)| &a.free_vars() - &p.bound_vars()))
+                    .collect()
+            }
+        }
+    }
+}
 // fn merge_match(arg: NodeDS, e1: Vec<(Pat, NodeDS)>, e2: Vec<(Pat, NodeDS)>) -> Option<NodeDS> {
 // e1.append(e2);
 // Some(NodeDS::Match(Box::new(arg), e1))
