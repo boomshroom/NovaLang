@@ -60,22 +60,26 @@ pub enum TypedNode {
 }
 
 impl TypedNode {
-    fn get_type(&self) -> Type {
+    pub fn get_type(&self) -> Type {
         match *self {
             TypedNode::Lit(_) => Type::Int,
             TypedNode::Var(_, ref t) => t.clone(),
-            TypedNode::Abs(_, ref b, ref p, ref c) => if c.len() == 0 {
-                Type::Func(Box::new(p.clone()), Box::new(b.get_type()))
-            } else {
-                Type::Closure(Box::new(p.clone()), Box::new(b.get_type()), c.iter().map(|&(_, ref t)| t.clone()).collect())
-            },
+            TypedNode::Abs(_, ref b, ref p, ref c) => {
+                if c.len() == 0 {
+                    Type::Func(Box::new(p.clone()), Box::new(b.get_type()))
+                } else {
+                    Type::Closure(Box::new(p.clone()),
+                                  Box::new(b.get_type()),
+                                  c.iter().map(|&(_, ref t)| t.clone()).collect())
+                }
+            }
             TypedNode::App(ref f, _) => f.get_ret_type().unwrap(),
             TypedNode::Let(_, _, ref b) => b.get_type(),
             TypedNode::Match(_, _, ref b) => b.clone(),
         }
     }
 
-    fn get_ret_type(&self) -> Option<Type> {
+    pub fn get_ret_type(&self) -> Option<Type> {
         match *self {
             TypedNode::Abs(_, ref b, _, _) => Some(b.get_type()),
             _ => None,
@@ -88,7 +92,9 @@ impl Types for TypedNode {
         match *self {
             TypedNode::Lit(_) => HashSet::new(),
             TypedNode::Var(_, ref t) => t.ftv(),
-            TypedNode::Abs(_, ref b, ref p, ref c) => &(&b.ftv() | &p.ftv()) | &c.iter().flat_map(|&(_, ref t)| t.ftv()).collect(),
+            TypedNode::Abs(_, ref b, ref p, ref c) => {
+                &(&b.ftv() | &p.ftv()) | &c.iter().flat_map(|&(_, ref t)| t.ftv()).collect()
+            }
             TypedNode::App(ref f, ref p) => &f.ftv() | &p.ftv(),
             TypedNode::Let(_, ref b, ref r) => &b.ftv() | &r.ftv(),
             TypedNode::Match(ref a, _, ref t) => &a.ftv() | &t.ftv(),
@@ -99,10 +105,23 @@ impl Types for TypedNode {
         match self {
             TypedNode::Lit(l) => TypedNode::Lit(l),
             TypedNode::Var(i, t) => TypedNode::Var(i, t.apply(info)),
-            TypedNode::Abs(a, b, p, c) => TypedNode::Abs(a, Box::new(b.apply(info)), p.apply(info), c.into_iter().map(|(i, t)| (i, t.apply(info))).collect()),
-            TypedNode::App(f, p) => TypedNode::App(Box::new(f.apply(info)), Box::new(p.apply(info))),
-            TypedNode::Let(i, t, b) => TypedNode::Let(i, Box::new(t.apply(info)), Box::new(b.apply(info))),
-            TypedNode::Match(a, arms, t) => TypedNode::Match(Box::new(a.apply(info)), arms.into_iter().map(|(p, n)| (p, n.apply(info))).collect(), t.apply(info)),
+            TypedNode::Abs(a, b, p, c) => {
+                TypedNode::Abs(a,
+                               Box::new(b.apply(info)),
+                               p.apply(info),
+                               c.into_iter().map(|(i, t)| (i, t.apply(info))).collect())
+            }
+            TypedNode::App(f, p) => {
+                TypedNode::App(Box::new(f.apply(info)), Box::new(p.apply(info)))
+            }
+            TypedNode::Let(i, t, b) => {
+                TypedNode::Let(i, Box::new(t.apply(info)), Box::new(b.apply(info)))
+            }
+            TypedNode::Match(a, arms, t) => {
+                TypedNode::Match(Box::new(a.apply(info)),
+                                 arms.into_iter().map(|(p, n)| (p, n.apply(info))).collect(),
+                                 t.apply(info))
+            }
         }
     }
 }
@@ -330,7 +349,7 @@ impl TypeInfo {
     }
 }
 
-impl <T: Types + Clone> Scheme<T> {
+impl<T: Types + Clone> Scheme<T> {
     fn instantiate(&self, next: &mut TId) -> (TypeInfo, T) {
         match self {
             &Scheme::Type(ref t) => (TypeInfo::new(), t.clone()),
@@ -558,7 +577,10 @@ fn infer_pat(p: &Pat, next: &mut TId) -> Result<Type, TypeError> {
     }
 }
 
-pub fn infer(n: &NodeDS, env: &mut TypeEnv, next: &mut TId) -> Result<(TypeInfo, TypedNode), TypeError> {
+pub fn infer(n: &NodeDS,
+             env: &mut TypeEnv,
+             next: &mut TId)
+             -> Result<(TypeInfo, TypedNode), TypeError> {
     match n {
         &NodeDS::Var(ref i) => {
             env.0
@@ -590,7 +612,7 @@ pub fn infer(n: &NodeDS, env: &mut TypeEnv, next: &mut TId) -> Result<(TypeInfo,
                 &None => {}
             };
             if free.is_empty() {
-                //let t = Type::Func(Box::new()new_id.apply(&s), Box::new(t));
+                // let t = Type::Func(Box::new()new_id.apply(&s), Box::new(t));
                 let nt = TypedNode::Abs(i.clone(), Box::new(body), new_id, Vec::new()).apply(&s);
                 Ok((s, nt))
             } else {
@@ -602,11 +624,11 @@ pub fn infer(n: &NodeDS, env: &mut TypeEnv, next: &mut TId) -> Result<(TypeInfo,
                             .ok_or(TypeError::Unbound(i.clone()))
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let (idents, schemes) : (Vec<_>, Vec<_>) = enumed.into_iter().unzip();
+                let (idents, schemes): (Vec<_>, Vec<_>) = enumed.into_iter().unzip();
                 let (infos, ts): (Vec<_>, Vec<_>) = schemes.into_iter().unzip();
                 let info = infos.into_iter().fold(s, |i1, i2| i1.compose(i2));
                 let ts = idents.into_iter().zip(ts.into_iter().map(|t| t.apply(&info))).collect();
-                //let t = Type::Closure(Box::new(new_id.apply(&info)), Box::new(t), ts);
+                // let t = Type::Closure(Box::new(new_id.apply(&info)), Box::new(t), ts);
                 let tagged = TypedNode::Abs(i.clone(), Box::new(body), new_id, ts).apply(&info);
 
                 Ok((info, tagged))
@@ -679,27 +701,31 @@ pub fn infer(n: &NodeDS, env: &mut TypeEnv, next: &mut TId) -> Result<(TypeInfo,
                 .zip(envs)
                 .map(|(b, e)| infer(b, &mut env.extend(e), next))
                 .collect::<Result<Vec<_>, _>>()?;
-            //println!("{:?}", t);
+            // println!("{:?}", t);
 
-            /*
-            arm_ts.into_iter()
-                .fold(Ok((info, next.next_t())), |r, (i, ty)| {
+            // arm_ts.into_iter()
+            // .fold(Ok((info, next.next_t())), |r, (i, ty)| {
+            // r.and_then(|(info, t)| {
+            // let i = info.compose(i).compose(t.clone().unify(ty)?);
+            // let t = t.apply(&i);
+            // Ok((i, t))
+            // })
+            // })
+            //
+
+            let (info, t_arm) = arm_ts.iter()
+                .fold(Ok((info, next.next_t())), |r, &(ref i, ref n)| {
                     r.and_then(|(info, t)| {
-                            let i = info.compose(i).compose(t.clone().unify(ty)?);
-                            let t = t.apply(&i);
-                            Ok((i, t))
+                        let i = info.compose(i.clone()).compose(t.clone().unify(n.get_type())?);
+                        let t = t.apply(&i);
+                        Ok((i, t))
                     })
-                })
-            */
-
-            let (info, t_arm) = arm_ts.iter().fold(Ok((info, next.next_t())), |r, &(ref i, ref n)| {
-                r.and_then(|(info, t)| {
-                    let i = info.compose(i.clone()).compose(t.clone().unify(n.get_type())?);
-                    let t = t.apply(&i);
-                    Ok((i, t))
-                })
-            })?;
-            let arms = arms.clone().into_iter().map(|(p, _)| p).zip(arm_ts.into_iter().map(|(_, n)| n)).collect();
+                })?;
+            let arms = arms.clone()
+                .into_iter()
+                .map(|(p, _)| p)
+                .zip(arm_ts.into_iter().map(|(_, n)| n))
+                .collect();
             let n = TypedNode::Match(Box::new(t), arms, t_arm).apply(&info);
             Ok((info, n))
         }
