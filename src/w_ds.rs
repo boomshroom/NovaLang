@@ -8,7 +8,7 @@ use std::cmp::Ordering;
 pub struct TId(u64);
 
 impl TId {
-    fn new() -> TId {
+    pub fn new() -> TId {
         TId(0)
     }
     fn next_t(&mut self) -> Type {
@@ -37,9 +37,9 @@ pub enum Type {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Scheme {
-    Type(Type),
-    Forall(Type, Vec<(TId, HashSet<Class>)>),
+pub enum Scheme<T: Types> {
+    Type(T),
+    Forall(T, Vec<(TId, HashSet<Class>)>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -49,9 +49,67 @@ pub enum Class {
     Func(Type, Type),
 }
 
+#[derive(Debug, Clone)]
+pub enum TypedNode {
+    Lit(i64),
+    Var(Arg, Type),
+    Abs(Option<Arg>, Box<TypedNode>, Type, Vec<(Arg, Type)>),
+    App(Box<TypedNode>, Box<TypedNode>),
+    Let(String, Box<Scheme<TypedNode>>, Box<TypedNode>),
+    Match(Box<TypedNode>, Vec<(Pat, TypedNode)>, Type),
+}
+
+impl TypedNode {
+    fn get_type(&self) -> Type {
+        match *self {
+            TypedNode::Lit(_) => Type::Int,
+            TypedNode::Var(_, ref t) => t.clone(),
+            TypedNode::Abs(_, ref b, ref p, ref c) => if c.len() == 0 {
+                Type::Func(Box::new(p.clone()), Box::new(b.get_type()))
+            } else {
+                Type::Closure(Box::new(p.clone()), Box::new(b.get_type()), c.iter().map(|&(_, ref t)| t.clone()).collect())
+            },
+            TypedNode::App(ref f, _) => f.get_ret_type().unwrap(),
+            TypedNode::Let(_, _, ref b) => b.get_type(),
+            TypedNode::Match(_, _, ref b) => b.clone(),
+        }
+    }
+
+    fn get_ret_type(&self) -> Option<Type> {
+        match *self {
+            TypedNode::Abs(_, ref b, _, _) => Some(b.get_type()),
+            _ => None,
+        }
+    }
+}
+
+impl Types for TypedNode {
+    fn ftv(&self) -> HashSet<TId> {
+        match *self {
+            TypedNode::Lit(_) => HashSet::new(),
+            TypedNode::Var(_, ref t) => t.ftv(),
+            TypedNode::Abs(_, ref b, ref p, ref c) => &(&b.ftv() | &p.ftv()) | &c.iter().flat_map(|&(_, ref t)| t.ftv()).collect(),
+            TypedNode::App(ref f, ref p) => &f.ftv() | &p.ftv(),
+            TypedNode::Let(_, ref b, ref r) => &b.ftv() | &r.ftv(),
+            TypedNode::Match(ref a, _, ref t) => &a.ftv() | &t.ftv(),
+        }
+    }
+
+    fn apply(self, info: &TypeInfo) -> TypedNode {
+        match self {
+            TypedNode::Lit(l) => TypedNode::Lit(l),
+            TypedNode::Var(i, t) => TypedNode::Var(i, t.apply(info)),
+            TypedNode::Abs(a, b, p, c) => TypedNode::Abs(a, Box::new(b.apply(info)), p.apply(info), c.into_iter().map(|(i, t)| (i, t.apply(info))).collect()),
+            TypedNode::App(f, p) => TypedNode::App(Box::new(f.apply(info)), Box::new(p.apply(info))),
+            TypedNode::Let(i, t, b) => TypedNode::Let(i, Box::new(t.apply(info)), Box::new(b.apply(info))),
+            TypedNode::Match(a, arms, t) => TypedNode::Match(Box::new(a.apply(info)), arms.into_iter().map(|(p, n)| (p, n.apply(info))).collect(), t.apply(info)),
+        }
+    }
+}
+
 // type Scheme = (Vec<TId>, Type);
 
-trait Types {
+pub trait Types {
     fn ftv(&self) -> HashSet<TId>;
     fn apply(self, &TypeInfo) -> Self;
 }
@@ -80,7 +138,7 @@ impl Types for Type {
     }
 }
 
-impl Types for Scheme {
+impl<T: Types> Types for Scheme<T> {
     fn ftv(&self) -> HashSet<TId> {
         match self {
             &Scheme::Type(ref t) => t.ftv(),
@@ -90,7 +148,7 @@ impl Types for Scheme {
         }
     }
 
-    fn apply(self, s: &TypeInfo) -> Scheme {
+    fn apply(self, s: &TypeInfo) -> Scheme<T> {
         match self {
             Scheme::Type(t) => Scheme::Type(t.apply(s)),
             Scheme::Forall(t, v) => {
@@ -144,7 +202,7 @@ impl<T: Eq + Hash> Types for HashSet<T>
 }
 
 #[derive(Debug,Clone)]
-struct TypeInfo {
+pub struct TypeInfo {
     subst: HashMap<TId, Type>,
     constr: HashMap<TId, HashSet<Class>>,
 }
@@ -159,13 +217,13 @@ struct TypeInfo {
 // }
 //
 #[derive(Debug, Clone)]
-struct TypeEnv(HashMap<Ident, Scheme>);
+pub struct TypeEnv(HashMap<Ident, Scheme<Type>>);
 
 impl TypeEnv {
     fn new() -> TypeEnv {
         TypeEnv(HashMap::new())
     }
-    fn generalize(&self, t: Type, info: &TypeInfo) -> Scheme {
+    fn generalize<T: Types>(&self, t: T, info: &TypeInfo) -> Scheme<T> {
         let vars = &t.ftv() - &self.ftv();
         match vars.len() {
             0 => Scheme::Type(t),
@@ -272,28 +330,39 @@ impl TypeInfo {
     }
 }
 
-fn instantiate(s: &Scheme, next: &mut TId) -> (TypeInfo, Type) {
-    match s {
-        &Scheme::Type(ref t) => (TypeInfo::new(), t.clone()),
-        &Scheme::Forall(ref t, ref v) => {
-            // println!("{:?} {{{:?}}}", t, v);
-            let (s, c): (_, HashMap<_, _>) = v.iter()
-                .map(|&(ref t, ref cls)| {
-                    let id = next.next_id();
-                    ((t.clone(), Type::Free(id)), (id, cls.clone()))
-                })
-                .unzip();
-            let info = TypeInfo {
-                subst: s,
-                constr: c.clone(),
-            };
-            let t = t.clone().apply(&info);
-            let info = TypeInfo {
-                subst: HashMap::new(),
-                constr: c.into_iter().map(|(id, c)| (id, c.apply(&info))).collect(),
-            };
+impl <T: Types + Clone> Scheme<T> {
+    fn instantiate(&self, next: &mut TId) -> (TypeInfo, T) {
+        match self {
+            &Scheme::Type(ref t) => (TypeInfo::new(), t.clone()),
+            &Scheme::Forall(ref t, ref v) => {
+                // println!("{:?} {{{:?}}}", t, v);
+                let (s, c): (_, HashMap<_, _>) = v.iter()
+                    .map(|&(ref t, ref cls)| {
+                        let id = next.next_id();
+                        ((t.clone(), Type::Free(id)), (id, cls.clone()))
+                    })
+                    .unzip();
+                let info = TypeInfo {
+                    subst: s,
+                    constr: c.clone(),
+                };
+                let t = t.clone().apply(&info);
+                let info = TypeInfo {
+                    subst: HashMap::new(),
+                    constr: c.into_iter().map(|(id, c)| (id, c.apply(&info))).collect(),
+                };
 
-            (info, t)
+                (info, t)
+            }
+        }
+    }
+}
+
+impl Scheme<TypedNode> {
+    fn get_type(&self) -> Scheme<Type> {
+        match self {
+            &Scheme::Type(ref n) => Scheme::Type(n.get_type()),
+            &Scheme::Forall(ref n, ref v) => Scheme::Forall(n.get_type(), v.clone()),
         }
     }
 }
@@ -489,15 +558,16 @@ fn infer_pat(p: &Pat, next: &mut TId) -> Result<Type, TypeError> {
     }
 }
 
-fn infer(n: &NodeDS, env: &mut TypeEnv, next: &mut TId) -> Result<(TypeInfo, Type), TypeError> {
+pub fn infer(n: &NodeDS, env: &mut TypeEnv, next: &mut TId) -> Result<(TypeInfo, TypedNode), TypeError> {
     match n {
         &NodeDS::Var(ref i) => {
             env.0
                 .get(i)
-                .map(|s| instantiate(s, next))
+                .map(|s| s.instantiate(next))
+                .map(|(info, t)| (info, TypedNode::Var(i.clone(), t)))
                 .ok_or(TypeError::Unbound(i.clone()))
         }
-        &NodeDS::Lit(_) => Ok((TypeInfo::new(), Type::Int)),
+        &NodeDS::Lit(i) => Ok((TypeInfo::new(), TypedNode::Lit(i))),
         &NodeDS::Abs(ref i, ref e) => {
             let new_id = next.next_t();
             // let env = env.remove(i.as_str());
@@ -510,7 +580,7 @@ fn infer(n: &NodeDS, env: &mut TypeEnv, next: &mut TId) -> Result<(TypeInfo, Typ
                 &None => env.clone(),
             };
 
-            let (s, t) = infer(e, &mut env, next)?;
+            let (s, body) = infer(e, &mut env, next)?;
 
             let mut free = e.free_vars();
             match i {
@@ -520,23 +590,26 @@ fn infer(n: &NodeDS, env: &mut TypeEnv, next: &mut TId) -> Result<(TypeInfo, Typ
                 &None => {}
             };
             if free.is_empty() {
-                let t = Type::Func(Box::new(new_id.apply(&s)), Box::new(t));
-                Ok((s, t))
+                //let t = Type::Func(Box::new()new_id.apply(&s), Box::new(t));
+                let nt = TypedNode::Abs(i.clone(), Box::new(body), new_id, Vec::new()).apply(&s);
+                Ok((s, nt))
             } else {
-                let schemes = free.into_iter()
+                let enumed = free.into_iter()
                     .map(|i| {
                         env.0
                             .get(i)
-                            .map(|s1| instantiate(s1, next))
+                            .map(|s1| (i.clone(), s1.instantiate(next)))
                             .ok_or(TypeError::Unbound(i.clone()))
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                let (idents, schemes) : (Vec<_>, Vec<_>) = enumed.into_iter().unzip();
                 let (infos, ts): (Vec<_>, Vec<_>) = schemes.into_iter().unzip();
                 let info = infos.into_iter().fold(s, |i1, i2| i1.compose(i2));
-                let ts = ts.into_iter().map(|t| t.apply(&info)).collect();
-                let t = Type::Closure(Box::new(new_id.apply(&info)), Box::new(t), ts);
+                let ts = idents.into_iter().zip(ts.into_iter().map(|t| t.apply(&info))).collect();
+                //let t = Type::Closure(Box::new(new_id.apply(&info)), Box::new(t), ts);
+                let tagged = TypedNode::Abs(i.clone(), Box::new(body), new_id, ts).apply(&info);
 
-                Ok((info, t))
+                Ok((info, tagged))
             }
         }
         &NodeDS::App(ref f, ref a) => {
@@ -547,10 +620,12 @@ fn infer(n: &NodeDS, env: &mut TypeEnv, next: &mut TId) -> Result<(TypeInfo, Typ
                     let (s1, tf) = infer(f, env, next)?;
                     let (s2, ta) = infer(a, &mut env.clone().apply(&s1), next)?;
 
-                    let sc = tf.clone().unify_class(Class::Func(ta, t.clone()))?;
+                    let sc = tf.get_type().unify_class(Class::Func(ta.get_type(), t.clone()))?;
                     let s = s1.compose(s2).compose(sc).apply_constraints()?;
 
-                    let t = t.apply(&s);
+                    let tagged = TypedNode::App(Box::new(tf), Box::new(ta));
+
+                    let t = tagged.apply(&s);
                     Ok((s, t))
                 })(f, a)
                 .map_err(err)
@@ -561,21 +636,23 @@ fn infer(n: &NodeDS, env: &mut TypeEnv, next: &mut TId) -> Result<(TypeInfo, Typ
             // let tmp = next.next_t();
             // env.0.insert(Arg::Ident(i.clone()), Scheme::Type(tmp.clone()));
 
-            let (s1, t1) = infer(b, &mut env, next)?;
+            let (s1, tb) = infer(b, &mut env, next)?;
             // println!("{:?} ({:?})", t1, s1);
             // let sb = s1.compose(tmp.unify(t1.clone())?);
             let sb = s1;
-            let t = env.clone().apply(&sb).generalize(t1, &sb);
+            let t = env.clone().apply(&sb).generalize(tb, &sb);
 
-            env.0.insert(Arg::Ident(i.clone()), t);
+            env.0.insert(Arg::Ident(i.clone()), t.get_type());
 
             env = env.apply(&sb);
 
-            let (s2, t) = infer(e, &mut env, next)?;
+            let (s2, tn) = infer(e, &mut env, next)?;
 
             let info = sb.compose(s2).apply_constraints()?;
-            let t = t.apply(&info);
-            Ok((info, t))
+
+            let tagged = TypedNode::Let(i.clone(), Box::new(t), Box::new(tn)).apply(&info);
+
+            Ok((info, tagged))
         }
         &NodeDS::Match(ref e, ref arms) => {
             let (sa, ta) = infer(e, env, next)?;
@@ -585,14 +662,14 @@ fn infer(n: &NodeDS, env: &mut TypeEnv, next: &mut TId) -> Result<(TypeInfo, Typ
                 .into_iter()
                 .fold(Ok((sa, ta)), |r, p| {
                     r.and_then(|(s, t)| {
-                        let s = s.compose(t.clone().unify(p)?);
+                        let s = s.compose(t.get_type().unify(p)?);
                         let t = t.apply(&s);
                         Ok((s, t))
                     })
                 })?;
 
             let (infos, envs): (Vec<_>, Vec<_>) = arms.iter()
-                .map(|&(ref p, _)| t.clone().unify_pat(p.clone(), next))
+                .map(|&(ref p, _)| t.get_type().unify_pat(p.clone(), next))
                 .collect::<Result<Vec<(_, _)>, _>>()?
                 .into_iter()
                 .unzip();
@@ -603,6 +680,8 @@ fn infer(n: &NodeDS, env: &mut TypeEnv, next: &mut TId) -> Result<(TypeInfo, Typ
                 .map(|(b, e)| infer(b, &mut env.extend(e), next))
                 .collect::<Result<Vec<_>, _>>()?;
             //println!("{:?}", t);
+
+            /*
             arm_ts.into_iter()
                 .fold(Ok((info, next.next_t())), |r, (i, ty)| {
                     r.and_then(|(info, t)| {
@@ -611,12 +690,24 @@ fn infer(n: &NodeDS, env: &mut TypeEnv, next: &mut TId) -> Result<(TypeInfo, Typ
                             Ok((i, t))
                     })
                 })
+            */
+
+            let (info, t_arm) = arm_ts.iter().fold(Ok((info, next.next_t())), |r, &(ref i, ref n)| {
+                r.and_then(|(info, t)| {
+                    let i = info.compose(i.clone()).compose(t.clone().unify(n.get_type())?);
+                    let t = t.apply(&i);
+                    Ok((i, t))
+                })
+            })?;
+            let arms = arms.clone().into_iter().map(|(p, _)| p).zip(arm_ts.into_iter().map(|(_, n)| n)).collect();
+            let n = TypedNode::Match(Box::new(t), arms, t_arm).apply(&info);
+            Ok((info, n))
         }
         exp => Err(TypeError::Unimplemented(exp.clone())),
     }
 }
 
-fn build_tup_ty(i: u64) -> (Ident, Scheme) {
+fn build_tup_ty(i: u64) -> (Ident, Scheme<Type>) {
     let id = Arg::Ident(iter::repeat(',').take(i as usize - 1).collect());
     let t = (0..i).rev().fold(Type::Tuple((0..i).map(|i| Type::Free(TId(i))).collect()),
                               |t, j| {
@@ -627,7 +718,7 @@ fn build_tup_ty(i: u64) -> (Ident, Scheme) {
     (id, Scheme::Forall(t, (0..i).map(|i| (TId(i), HashSet::new())).collect()))
 }
 
-pub fn run_infer(n: &NodeDS) -> Result<Type, TypeError> {
+pub fn run_infer(n: &NodeDS) -> Result<TypedNode, TypeError> {
     let mut ids = TId::new();
 
     let add_id = ids.next_id();
