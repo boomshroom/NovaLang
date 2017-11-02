@@ -463,7 +463,7 @@ impl Type {
             // (Type::Int, Pat::Lit(_)) => Ok((TypeInfo::new() TypeEnv::new())),
             (t, Pat::Lit(_)) => t.clone().unify(Type::Int).map(|info| (info, TypeEnv::new())),
             (t, Pat::Cons(c, args)) => {
-                if (c.as_str() == "True" || c.as_str() == "False") {
+                if c.as_str() == "True" || c.as_str() == "False" {
                     t.unify(Type::Bool).map(|info| (info, TypeEnv::new()))
                 } else if c.as_str() == "()" {
                     t.unify(Type::Unit).map(|info| (info, TypeEnv::new()))
@@ -551,7 +551,7 @@ fn infer_pat(p: &Pat, next: &mut TId) -> Result<Type, TypeError> {
         &Pat::Prim(_) => Ok(next.next_t()),
         &Pat::Lit(_) => Ok(next.next_t()),
         &Pat::Cons(ref c, ref args) => {
-            if (c.as_str() == "True" || c.as_str() == "False") {
+            if c.as_str() == "True" || c.as_str() == "False" {
                 if args.len() == 0 {
                     Ok(Type::Bool)
                 } else {
@@ -729,7 +729,6 @@ pub fn infer(n: &NodeDS,
             let n = TypedNode::Match(Box::new(t), arms, t_arm).apply(&info);
             Ok((info, n))
         }
-        exp => Err(TypeError::Unimplemented(exp.clone())),
     }
 }
 

@@ -33,11 +33,11 @@ macro_rules! deref {
 	});
 }
 
-pub struct Context (LLVMContextRef);
-pub struct Module<'a> (LLVMModuleRef, &'a Context, CString);
-pub struct Builder<'a> (LLVMBuilderRef, PhantomData<&'a ()>);
-pub struct BasicBlock<'a> (LLVMBasicBlockRef, PhantomData<&'a ()>, CString);
-pub struct Function<'a> (LLVMValueRef, &'a Context, CString);
+pub struct Context(LLVMContextRef);
+pub struct Module<'a>(LLVMModuleRef, &'a Context, CString);
+pub struct Builder<'a>(LLVMBuilderRef, PhantomData<&'a ()>);
+pub struct BasicBlock<'a>(LLVMBasicBlockRef, PhantomData<&'a ()>, CString);
+pub struct Function<'a>(LLVMValueRef, &'a Context, CString);
 
 dispose!(Context, LLVMContextDispose);
 dispose!('a, Module, LLVMDisposeModule);
@@ -52,57 +52,66 @@ deref!('a, BasicBlock, LLVMBasicBlockRef);
 deref!('a, Function, LLVMValueRef);
 
 impl Context {
-	pub fn new() -> Context {
-		Context(unsafe { LLVMContextCreate() })
-	}
+    pub fn new() -> Context {
+        Context(unsafe { LLVMContextCreate() })
+    }
 
-	pub fn module<'a, T: Into<Vec<u8>>>(&'a self, name: T) -> Result<Module<'a>, NulError> {
-		let name = CString::new(name)?;
-		Ok(Module(unsafe { LLVMModuleCreateWithNameInContext(name.as_ptr(), self.0) }, self, name))
-	}
+    pub fn module<'a, T: Into<Vec<u8>>>(&'a self, name: T) -> Result<Module<'a>, NulError> {
+        let name = CString::new(name)?;
+        Ok(Module(unsafe { LLVMModuleCreateWithNameInContext(name.as_ptr(), self.0) },
+                  self,
+                  name))
+    }
 
-	pub fn int_type(&self, bits: u32) -> LLVMTypeRef {
-		unsafe { LLVMIntTypeInContext(self.0, bits) }
-	}
+    pub fn int_type(&self, bits: u32) -> LLVMTypeRef {
+        unsafe { LLVMIntTypeInContext(self.0, bits) }
+    }
 
-	pub fn builder<'a>(&'a self) -> Builder<'a> {
-		Builder( unsafe {LLVMCreateBuilderInContext(self.0)}, PhantomData )
-	}
+    pub fn builder<'a>(&'a self) -> Builder<'a> {
+        Builder(unsafe { LLVMCreateBuilderInContext(self.0) }, PhantomData)
+    }
 }
 
-impl <'a>Display for Module<'a> {
-	fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-		let ptr = unsafe { CStr::from_ptr(LLVMPrintModuleToString(self.0)) };
+impl<'a> Display for Module<'a> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let ptr = unsafe { CStr::from_ptr(LLVMPrintModuleToString(self.0)) };
 
-		write!(f, "{}", ptr.to_string_lossy())
-	}
+        write!(f, "{}", ptr.to_string_lossy())
+    }
 }
 
-impl <'a> Module<'a> {
-	pub fn new_function<T: Into<Vec<u8>>>(&'a self, name: T, ty: LLVMTypeRef) -> Result<Function<'a>, NulError> {
-		let name = CString::new(name)?;
-		//let ty = unsafe {LLVMFunctionType(ret, args.as_mut_ptr(), args.len() as u32, 0) };
-		Ok(Function(unsafe { LLVMAddFunction(self.0, name.as_ptr(), ty) }, self.1, name))
-	}
+impl<'a> Module<'a> {
+    pub fn new_function<T: Into<Vec<u8>>>(&'a self,
+                                          name: T,
+                                          ty: LLVMTypeRef)
+                                          -> Result<Function<'a>, NulError> {
+        let name = CString::new(name)?;
+        // let ty = unsafe {LLVMFunctionType(ret, args.as_mut_ptr(), args.len() as u32, 0) };
+        Ok(Function(unsafe { LLVMAddFunction(self.0, name.as_ptr(), ty) },
+                    self.1,
+                    name))
+    }
 }
 
-impl <'a> Function<'a> {
-	pub fn append_bb<T: Into<Vec<u8>>>(&self, name: T) -> Result<BasicBlock<'a>, NulError> {
-		let name = CString::new(name)?;
-		Ok(BasicBlock(unsafe { LLVMAppendBasicBlockInContext((self.1).0, self.0, name.as_ptr()) }, PhantomData, name))
-	}
+impl<'a> Function<'a> {
+    pub fn append_bb<T: Into<Vec<u8>>>(&self, name: T) -> Result<BasicBlock<'a>, NulError> {
+        let name = CString::new(name)?;
+        Ok(BasicBlock(unsafe { LLVMAppendBasicBlockInContext((self.1).0, self.0, name.as_ptr()) },
+                      PhantomData,
+                      name))
+    }
 }
 
-impl <'a> Builder<'a> {
-	pub fn set_block(&self, bb: BasicBlock<'a>) {
-		unsafe { LLVMPositionBuilderAtEnd(self.0, bb.0) }
-	}
+impl<'a> Builder<'a> {
+    pub fn set_block(&self, bb: BasicBlock<'a>) {
+        unsafe { LLVMPositionBuilderAtEnd(self.0, bb.0) }
+    }
 }
 
 pub fn uint(i: u64, t: LLVMTypeRef) -> LLVMValueRef {
-	unsafe { LLVMConstInt(t, i, 0) }
+    unsafe { LLVMConstInt(t, i, 0) }
 }
 
 pub fn sint(i: i64, t: LLVMTypeRef) -> LLVMValueRef {
-	unsafe { LLVMConstInt(t, i as u64, 0) }
+    unsafe { LLVMConstInt(t, i as u64, 0) }
 }
