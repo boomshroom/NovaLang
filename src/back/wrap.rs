@@ -2,6 +2,8 @@ use llvm_sys::prelude::*;
 use llvm_sys::core::*;
 use std::ffi::{CString, CStr, NulError};
 use std::fmt::{self, Display, Formatter};
+use std::marker::PhantomData;
+use std::ops::Deref;
 
 macro_rules! dispose {
 	($t:ident, $f:ident) => (impl Drop for $t {
@@ -9,24 +11,45 @@ macro_rules! dispose {
 			unsafe { $f(self.0) }
 		}
 	});
-	($l:tt, $t:ident, $f:ident) == (impl <$l> Drop for $t<$l> {
+	($l:tt, $t:ident, $f:ident) => (impl <$l> Drop for $t<$l> {
 		fn drop(&mut self) {
 			unsafe { $f(self.0) }
 		}
 	});
 }
 
+macro_rules! deref {
+	($t:ident, $i:ident) => (impl Deref for $t {
+		type Target = $i;
+		fn deref(&self) -> &$i{
+			&self.0
+		}
+	});
+	($l:tt, $t:ident, $i:ident) => (impl <$l> Deref for $t<$l> {
+		type Target = $i;
+		fn deref(&self) -> &$i{
+			&self.0
+		}
+	});
+}
+
 pub struct Context (LLVMContextRef);
 pub struct Module<'a> (LLVMModuleRef, &'a Context, CString);
-pub struct Builder<'a> (LLVMBuilderRef, PhantomData<'a>);
-pub struct BasicBlock<'a> (LLVMBasicBlockRef, PhantomData<'a>, CString);
+pub struct Builder<'a> (LLVMBuilderRef, PhantomData<&'a ()>);
+pub struct BasicBlock<'a> (LLVMBasicBlockRef, PhantomData<&'a ()>, CString);
 pub struct Function<'a> (LLVMValueRef, &'a Context, CString);
 
-dispose(Context, LLVMContextDispose);
-dispose('a, Module, LLVMDisposeModule);
-dispose('a, Builder, LLVMDisposeBuilder);
-dispose('a, BasicBlock, LLVMDeleteBasicBlock);
-dispose('a, Function, LLVMDeleteFunction);
+dispose!(Context, LLVMContextDispose);
+dispose!('a, Module, LLVMDisposeModule);
+dispose!('a, Builder, LLVMDisposeBuilder);
+dispose!('a, BasicBlock, LLVMDeleteBasicBlock);
+dispose!('a, Function, LLVMDeleteFunction);
+
+deref!(Context, LLVMContextRef);
+deref!('a, Module, LLVMModuleRef);
+deref!('a, Builder, LLVMBuilderRef);
+deref!('a, BasicBlock, LLVMBasicBlockRef);
+deref!('a, Function, LLVMValueRef);
 
 impl Context {
 	pub fn new() -> Context {
@@ -35,37 +58,38 @@ impl Context {
 
 	pub fn module<'a, T: Into<Vec<u8>>>(&'a self, name: T) -> Result<Module<'a>, NulError> {
 		let name = CString::new(name)?;
-		Ok(Module(unsafe { LLVMModuleCreateWithNameInContext(name.as_ptr(), self.0) }, self, name)
+		Ok(Module(unsafe { LLVMModuleCreateWithNameInContext(name.as_ptr(), self.0) }, self, name))
 	}
 
 	pub fn int_type(&self, bits: u32) -> LLVMTypeRef {
-		unsafe { LLVMIntTypeInContext(self, bits) };
+		unsafe { LLVMIntTypeInContext(self.0, bits) }
+	}
+
+	pub fn builder<'a>(&'a self) -> Builder<'a> {
+		Builder( unsafe {LLVMCreateBuilderInContext(self.0)}, PhantomData )
 	}
 }
 
 impl <'a>Display for Module<'a> {
 	fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-		let ptr = unsafe { CStr::fromPtr(LLVMPrintModuleToString(self.0)) };
+		let ptr = unsafe { CStr::from_ptr(LLVMPrintModuleToString(self.0)) };
 
-		for byte in ptr.to_bytes().iter().flat_map(|&b| ascii::escape_default(b)) {
-            f.write_char(byte as char)?;
-        };
-        Ok()
+		write!(f, "{}", ptr.to_string_lossy())
 	}
 }
 
 impl <'a> Module<'a> {
-	fn new_function<T: Into<Vec<u8>>>(&'a self, name: T, ret: LLVMTypeRef, args: &'a [LLVMTypeRef]) -> Result<Function<'a>, NulError> {
+	pub fn new_function<T: Into<Vec<u8>>>(&'a self, name: T, ty: LLVMTypeRef) -> Result<Function<'a>, NulError> {
 		let name = CString::new(name)?;
-		let ty = LLVMFunctionType(ret, args.as_ptr(), args.len(), 0);
-		Ok(Function(unsafe { LLVMAddFunction(name.as_ptr(), self.0, ty) }, self.1, name)
+		//let ty = unsafe {LLVMFunctionType(ret, args.as_mut_ptr(), args.len() as u32, 0) };
+		Ok(Function(unsafe { LLVMAddFunction(self.0, name.as_ptr(), ty) }, self.1, name))
 	}
 }
 
 impl <'a> Function<'a> {
 	pub fn append_bb<T: Into<Vec<u8>>>(&self, name: T) -> Result<BasicBlock<'a>, NulError> {
 		let name = CString::new(name)?;
-		Ok(BasicBlock(unsafe { LLVMAppendBasicBlockInContext(self.1, self.0, name.as_ptr()) }, PhantomData, name))
+		Ok(BasicBlock(unsafe { LLVMAppendBasicBlockInContext((self.1).0, self.0, name.as_ptr()) }, PhantomData, name))
 	}
 }
 
