@@ -43,7 +43,7 @@ dispose!(Context, LLVMContextDispose);
 dispose!('a, Module, LLVMDisposeModule);
 dispose!('a, Builder, LLVMDisposeBuilder);
 //dispose!('a, BasicBlock, LLVMDeleteBasicBlock);
-//dispose!('a, Function, LLVMDeleteFunction);
+// dispose!('a, Function, LLVMDeleteFunction);
 
 deref!(Context, LLVMContextRef);
 deref!('a, Module, LLVMModuleRef);
@@ -96,7 +96,7 @@ impl<'a> Module<'a> {
 impl<'a> Function<'a> {
     pub fn append_bb<T: Into<Vec<u8>>>(&self, name: T) -> Result<BasicBlock<'a>, NulError> {
         let name = CString::new(name)?;
-        //eprintln!("{:?}", name);
+        // eprintln!("{:?}", name);
         Ok(BasicBlock(unsafe { LLVMAppendBasicBlockInContext((self.1).0, self.0, name.as_ptr()) },
                       PhantomData,
                       name))
@@ -108,21 +108,28 @@ impl<'a> Builder<'a> {
         unsafe { LLVMPositionBuilderAtEnd(self.0, bb.0) }
     }
 
-    pub fn build_insert_value<T: Into<Vec<u8>>>(&self, agg: LLVMValueRef, elem: LLVMValueRef, idx: u32, name: T) -> Result<LLVMValueRef, NulError> {
+    pub fn build_insert_value<T: Into<Vec<u8>>>(&self,
+                                                agg: LLVMValueRef,
+                                                elem: LLVMValueRef,
+                                                idx: u32,
+                                                name: T)
+                                                -> Result<LLVMValueRef, NulError> {
         assert!(!agg.is_null() && !elem.is_null(), "One of paramenters is null.");
         unsafe {
             use llvm_sys::LLVMTypeKind::*;
             let obj_ty = LLVMTypeOf(agg);
-            let elem_kind = LLVMGetTypeKind( LLVMTypeOf(elem) );
+            let elem_kind = LLVMGetTypeKind(LLVMTypeOf(elem));
             match LLVMGetTypeKind(obj_ty) {
                 LLVMStructTypeKind => {
                     assert!(idx < LLVMCountStructElementTypes(obj_ty));
-                    assert_eq!(LLVMGetTypeKind(LLVMStructGetTypeAtIndex(obj_ty, idx)), elem_kind, "Invalid type insertion.");
-                },
+                    assert_eq!(LLVMGetTypeKind(LLVMStructGetTypeAtIndex(obj_ty, idx)), elem_kind
+                    	, "Invalid type insertion.");
+                }
                 LLVMArrayTypeKind => {
                     assert!(idx < LLVMGetArrayLength(obj_ty));
-                    assert_eq!(LLVMGetTypeKind(LLVMGetElementType(obj_ty)), elem_kind, "Invalid type insertion.");
-                },
+                    assert_eq!(LLVMGetTypeKind(LLVMGetElementType(obj_ty)), elem_kind
+                    	, "Invalid type insertion.");
+                }
                 k => panic!("Only arrays and structs allowed. Got a {:?}", k),
             }
         }

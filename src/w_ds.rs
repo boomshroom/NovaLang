@@ -173,9 +173,11 @@ impl<T: Types> Types for Scheme<T> {
             Scheme::Type(t) => Scheme::Type(t.apply(s)),
             Scheme::Forall(t, v) => {
                 let mut s = s.clone();
-                v.iter().map(|&(id, _)| {
-                    s.remove(id);
-                }).last();
+                v.iter()
+                    .map(|&(id, _)| {
+                        s.remove(id);
+                    })
+                    .last();
                 Scheme::Forall(t.apply(&s),
                                v.into_iter().map(|(id, c)| (id, c.apply(&s))).collect())
             }
@@ -768,12 +770,13 @@ pub fn run_infer(n: &NodeDS) -> Result<TypedNode, TypeError> {
                    (Arg::Ident(String::from("()")), Scheme::Type(Type::Unit)),
                    (Arg::Ident(String::from("True")), Scheme::Type(Type::Bool)),
                    (Arg::Ident(String::from("False")), Scheme::Type(Type::Bool)),
-                   build_tup_ty(2), build_tup_ty(3)]
+                   build_tup_ty(2),
+                   build_tup_ty(3)]
         .into_iter()
         .collect();
 
     infer(n, &mut TypeEnv(env), &mut ids).and_then(|(info, t)| {
-        //eprintln!("{:?}", info);
+        // eprintln!("{:?}", info);
         info.test_constraints().map(|_| t)
     })
 }

@@ -283,24 +283,24 @@ pub fn test_lambda() {
 }
 
 pub fn test_exprs() {
-    println!("{:?}", expr(b"True").unwrap());
-    println!("{:?}", expr(b"False").unwrap());
-    println!("{:?}", expr(b"iszero e").unwrap());
-    println!("{:?}", expr(b"succ e").unwrap());
-    println!("{:?}", expr(b"pred e").unwrap());
-    println!("{:?}", expr(b"if e then e else e").unwrap());
-    println!("{:?}", expr(b"0").unwrap());
-    println!("");
-    println!("{:?}", type_expr(b"Int").unwrap());
-    println!("{:?}", type_expr(b"Bool").unwrap());
-    println!("{:?}", type_expr(b"(Int, Int)").unwrap());
-    println!("{:?}", type_expr(b"Int -> Int -> Bool").unwrap());
-    println!("");
-    println!("{:?}", decl(b"eq : Int -> Int -> Bool").unwrap());
-    println!("{:?}", defn(b"eq (Nat x) y = iszero (x - y)").unwrap());
-    println!("{:?}", decl(b"map : (Int -> Int) -> Int -> Int").unwrap());
-    println!("{:?}", defn(b"map f = f").unwrap());
-    println!("");
+    eprintln!("{:?}", expr(b"True").unwrap());
+    eprintln!("{:?}", expr(b"False").unwrap());
+    eprintln!("{:?}", expr(b"iszero e").unwrap());
+    eprintln!("{:?}", expr(b"succ e").unwrap());
+    eprintln!("{:?}", expr(b"pred e").unwrap());
+    eprintln!("{:?}", expr(b"if e then e else e").unwrap());
+    eprintln!("{:?}", expr(b"0").unwrap());
+    eprintln!("");
+    eprintln!("{:?}", type_expr(b"Int").unwrap());
+    eprintln!("{:?}", type_expr(b"Bool").unwrap());
+    eprintln!("{:?}", type_expr(b"(Int, Int)").unwrap());
+    eprintln!("{:?}", type_expr(b"Int -> Int -> Bool").unwrap());
+    eprintln!("");
+    eprintln!("{:?}", decl(b"eq : Int -> Int -> Bool").unwrap());
+    eprintln!("{:?}", defn(b"eq (Nat x) y = iszero (x - y)").unwrap());
+    eprintln!("{:?}", decl(b"map : (Int -> Int) -> Int -> Int").unwrap());
+    eprintln!("{:?}", defn(b"map f = f").unwrap());
+    eprintln!("");
 }
 // pub fn parse(src: &str) -> IResult<&[u8], Node> {
 // funcall(src.as_bytes())

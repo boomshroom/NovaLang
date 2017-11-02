@@ -1,4 +1,4 @@
-use super::wrap::{self, Context, Module, Builder};
+use super::wrap::{self, Context, Module, Builder, Function};
 use super::super::desugar::{Pat, Arg};
 use super::super::w_ds::{TypedNode, Type};
 use llvm_sys::prelude::*;
@@ -11,10 +11,11 @@ struct Compiler<'a> {
     lmod: &'a Module<'a>,
     build: Builder<'a>,
     vars: HashMap<Arg, LLVMValueRef>,
+    func: Function<'a>,
     counter: &'a mut Counter,
 }
 
-struct Counter (usize);
+struct Counter(usize);
 impl Counter {
     fn new() -> Counter {
         Counter(0)
@@ -30,20 +31,29 @@ pub fn compile(n: TypedNode) -> Result<String, NulError> {
     let ctx = Context::new();
     let modl = ctx.module("test")?;
     let mut c = Counter::new();
+    let f = modl.new_function("main",
+                      unsafe { LLVMFunctionType(ctx.int_type(32), null(), 0, 0) })?;
+
     let mut comp = Compiler {
         ctx: &ctx,
         lmod: &modl,
         build: ctx.builder(),
         vars: HashMap::new(),
+        func: f,
         counter: &mut c,
     };
 
-    let f = modl.new_function("main", comp.ll_type(&Type::Func(Box::new(Type::Int), Box::new(Type::Int))))?;
-    comp.build.set_block(f.append_bb("entry")?);
+    comp.build.set_block(comp.func.append_bb("entry")?);
 
     let r = comp.compile(n);
 
-    unsafe {LLVMBuildRet(*comp.build, r)};
+    unsafe {
+        LLVMBuildRet(*comp.build,
+                     LLVMBuildTruncOrBitCast(*comp.build,
+                                             r,
+                                             ctx.int_type(32),
+                                             comp.counter.next().as_ptr()))
+    };
 
     Ok(comp.lmod.to_string())
 }
@@ -51,8 +61,6 @@ pub fn compile(n: TypedNode) -> Result<String, NulError> {
 fn null<T>() -> *mut T {
     0 as *mut T
 }
-
-
 
 impl<'a> Compiler<'a> {
     fn compile(&mut self, n: TypedNode) -> LLVMValueRef {
@@ -84,19 +92,13 @@ impl<'a> Compiler<'a> {
                                   CString::new("_2").unwrap().as_ptr())
                 };
                 v
-            },
+            }
             Type::Closure(_, _, _) => {
                 let f_ptr = unsafe {
-                    LLVMBuildExtractElement(*self.build,
-                                            f,
-                                            wrap::uint(0, self.ctx.int_type(8)),
-                                            null())
+                    LLVMBuildExtractValue(*self.build, f, 0, self.counter.next().as_ptr())
                 };
                 let f_cap = unsafe {
-                    LLVMBuildExtractElement(*self.build,
-                                            f,
-                                            wrap::uint(1, self.ctx.int_type(8)),
-                                            null())
+                    LLVMBuildExtractValue(*self.build, f, 1, self.counter.next().as_ptr())
                 };
                 let mut args = [f_cap, a];
                 unsafe {
@@ -104,7 +106,7 @@ impl<'a> Compiler<'a> {
                                   f_ptr,
                                   args.as_mut_ptr(),
                                   args.len() as u32,
-                                  0 as *const _)
+                                  self.counter.next().as_ptr())
                 }
             }
             _ => unreachable!(),
@@ -121,89 +123,118 @@ impl<'a> Compiler<'a> {
         match cap.len() {
             0 => {
                 let ty = Type::Func(Box::new(arg), Box::new(b.get_type()));
-                //eprintln!("Genning function. ({:?})", ty);
+                // eprintln!("Genning function. ({:?})", ty);
                 let ll_type = self.ll_type(&ty);
-                let f_obj = unsafe { LLVMAddFunction(**self.lmod, self.counter.next().as_ptr(), ll_type) };
-                //let f_obj = self.lmod("")
+
+                /*let f_obj = unsafe {
+                    LLVMAddFunction(**self.lmod,
+                                    self.counter.next().as_ptr(),
+                                    LLVMGetElementType(ll_type))
+                };*/
+                let f_obj = self.lmod.new_function(self.counter.next(),
+                	unsafe { LLVMGetElementType(ll_type) }).unwrap();
                 assert!(!f_obj.is_null(), "Function is null");
-                //assert_eq!(, );
+                eprintln!("{:?}", unsafe { LLVMGetTypeKind(LLVMTypeOf(*f_obj)) });
+                // assert_eq!(, );
                 // let f_obj = self.lmod.new_function("", ll_type).unwrap();
-                
-                let mut new_ctx = Compiler {
-                    ctx: self.ctx,
-                    lmod: self.lmod,
-                    build: self.ctx.builder(),
-                    vars: HashMap::new(),
-                    counter: self.counter,
-                };
-                let bb = unsafe { LLVMAppendBasicBlockInContext(**new_ctx.ctx, f_obj, CString::new("_entry").unwrap().as_ptr()) };
-                unsafe { LLVMPositionBuilderAtEnd(*new_ctx.build, bb) };
-                // new_ctx.build.set_block(f_obj.append_bb("").unwrap());
+                let f_obj = {
+	                let mut new_ctx = Compiler {
+	                    ctx: self.ctx,
+	                    lmod: self.lmod,
+	                    build: self.ctx.builder(),
+	                    vars: HashMap::new(),
+	                    func: f_obj,
+	                    counter: self.counter,
+	                };
+	                /*let bb = unsafe {
+	                    LLVMAppendBasicBlockInContext(**new_ctx.ctx,
+	                                                  *f_obj,
+	                                                  CString::new("_entry").unwrap().as_ptr())
+	                };
+	                unsafe { LLVMPositionBuilderAtEnd(*new_ctx.build, bb) };*/
+	                new_ctx.build.set_block(new_ctx.func.append_bb("_entry").unwrap());
 
-                i.map(|i| new_ctx.vars.insert(i, {
-                    assert_eq!( unsafe { LLVMCountParams(f_obj) }, 1, "Function doesn't have 1 argument.");
-                    let v = unsafe { LLVMGetFirstParam(f_obj) };
-                    assert!(!v.is_null(), "Parameter is null.");
-                    v
-                }));
+	                i.map(|i| {
+	                    new_ctx.vars.insert(i, {
+	                        assert_eq!( unsafe { LLVMCountParams(*new_ctx.func) }, 1,
+	                    	"Function doesn't have 1 argument.");
+	                        let v = unsafe { LLVMGetFirstParam(*new_ctx.func) };
+	                        assert!(!v.is_null(), "Parameter is null.");
+	                        v
+	                    })
+	                });
 
-                unsafe { LLVMBuildRet(*new_ctx.build, new_ctx.compile(b)) };
-                
+	                unsafe { LLVMBuildRet(*new_ctx.build, new_ctx.compile(b)) };
+	                new_ctx.func
+	            };
+
                 // unsafe { LLVMDisposeBuilder(new_ctx.build) };
-                f_obj
+                *f_obj
             }
             _ => {
                 let ty = Type::Closure(Box::new(arg),
-                                                Box::new(b.get_type()),
-                                                cap.iter().map(|&(_, ref t)| t.clone()).collect());
+                                       Box::new(b.get_type()),
+                                       cap.iter().map(|&(_, ref t)| t.clone()).collect());
                 eprintln!("Genning closure. ({:?})", ty);
-                let ll_type =
-                    self.ll_type(&ty);
+                let ll_type = self.ll_type(&ty);
 
                 let capt: Vec<_> =
                     cap.clone().into_iter().map(|(v, t)| self.compile_var(v, t)).collect();
 
                 let f_ptr_ty = unsafe { LLVMGetElementType(LLVMStructGetTypeAtIndex(ll_type, 0)) };
                 eprintln!("Adding function.");
-                let f_obj = unsafe { LLVMAddFunction(**self.lmod, self.counter.next().as_ptr(), f_ptr_ty) };
+                /*let f_obj =
+                    unsafe { LLVMAddFunction(**self.lmod, self.counter.next().as_ptr(), f_ptr_ty) };
+                */
+                let f_obj = self.lmod.new_function(self.counter.next(), f_ptr_ty).unwrap();
                 eprintln!("Added function.");
-                // let f_obj = self.lmod.new_function("", f_ptr_ty).unwrap();
 
-{
-                let mut new_ctx = Compiler {
-                    ctx: self.ctx,
-                    lmod: self.lmod,
-                    build: self.ctx.builder(),
-                    vars: HashMap::new(),
-                    counter: self.counter,
+                let f_obj = {
+                    let mut new_ctx = Compiler {
+                        ctx: self.ctx,
+                        lmod: self.lmod,
+                        build: self.ctx.builder(),
+                        vars: HashMap::new(),
+                        func: f_obj,
+                        counter: self.counter,
+                    };
+
+                    /*let bb = unsafe {
+                        LLVMAppendBasicBlockInContext(**new_ctx.ctx,
+                                                      new_ctx.func,
+                                                      CString::new("_entry_c").unwrap().as_ptr())
+                    };
+                    unsafe { LLVMPositionBuilderAtEnd(*new_ctx.build, bb) };*/
+                    new_ctx.build.set_block(new_ctx.func.append_bb("_entry_c").unwrap());
+
+                    // frees.iter().enumerate().map(|(i, v)| )
+
+                    let capts = unsafe { LLVMGetParam(*new_ctx.func, 0) };
+                    let vars: Vec<_> = cap.into_iter()
+                        .enumerate()
+                        .map(|(i, (v, _))| {
+                            (v,
+                             unsafe {
+                                LLVMBuildExtractValue(*new_ctx.build,
+                                                      capts,
+                                                      i as u32,
+                                                      new_ctx.counter.next().as_ptr())
+                            })
+                        })
+                        .collect();
+                    new_ctx.vars.extend(vars);
+                    i.map(|i| new_ctx.vars.insert(i, unsafe { LLVMGetParam(*new_ctx.func, 1) }));
+
+                    eprintln!("Recursing.");
+                    unsafe { LLVMBuildRet(*new_ctx.build, new_ctx.compile(b)) };
+                    eprintln!("Recursed.");
+                    *new_ctx.func
                 };
-
-                let bb = unsafe { LLVMAppendBasicBlockInContext(**new_ctx.ctx, f_obj, CString::new("_entry_c").unwrap().as_ptr()) };
-                unsafe { LLVMPositionBuilderAtEnd(*new_ctx.build, bb) };
-                // new_ctx.build.set_block(f_obj.append_bb("").unwrap());
-
-                // frees.iter().enumerate().map(|(i, v)| )
-
-                let capts = unsafe { LLVMGetParam(f_obj, 0) };
-                let vars: Vec<_> = cap.into_iter()
-                    .enumerate()
-                    .map(|(i, (v, _))| {
-                        (v,
-                         unsafe { LLVMBuildExtractValue(*new_ctx.build, capts, i as u32, new_ctx.counter.next().as_ptr()) })
-                    })
-                    .collect();
-                new_ctx.vars.extend(vars);
-                i.map(|i| new_ctx.vars.insert(i, unsafe { LLVMGetParam(f_obj, 1) }));
-
-                eprintln!("Recursing.");
-                unsafe { LLVMBuildRet(*new_ctx.build, new_ctx.compile(b)) };
-                eprintln!("Recursed.");
-            }
 
                 let capt_type = unsafe { LLVMStructGetTypeAtIndex(ll_type, 1) };
                 eprintln!("Got element");
 
-                let mut cls_vec = [f_obj, unsafe { LLVMGetUndef(capt_type) } ];
+                let mut cls_vec = [f_obj, unsafe { LLVMGetUndef(capt_type) }];
                 eprintln!("finalizing");
                 let cls_obj = unsafe {
                     LLVMConstStructInContext(**self.ctx,
@@ -212,25 +243,41 @@ impl<'a> Compiler<'a> {
                                              0)
                 };
 
-                let capt_obj = capt.into_iter().enumerate().fold(unsafe { LLVMGetUndef(capt_type) }, |obj, (i, v)| unsafe {
+                let capt_obj = capt.into_iter().enumerate().fold(
+                	unsafe { LLVMGetUndef(capt_type) }, |obj, (i, v)| unsafe {
                     eprintln!("capture {}", i);
-                    //LLVMBuildInsertValue(*self.build, obj, v, i as u32, self.counter.next().as_ptr())
+                //LLVMBuildInsertValue(*self.build, obj, v, i as u32, self.counter.next().as_ptr())
                     self.build.build_insert_value(obj, v, i as u32, self.counter.next()).unwrap()
                 });
 
                 eprintln!("Closue Genned.");
-                unsafe { LLVMBuildInsertValue(*self.build, cls_obj, capt_obj, 1, self.counter.next().as_ptr()) }
-                //cls_obj
+                unsafe {
+                    LLVMBuildInsertValue(*self.build,
+                                         cls_obj,
+                                         capt_obj,
+                                         1,
+                                         self.counter.next().as_ptr())
+                }
+                // cls_obj
             }
         }
     }
 
     fn compile_var(&mut self, i: Arg, _: Type) -> LLVMValueRef {
-        //eprintln!("{:?}", i);
+        // eprintln!("{:?}", i);
         let v = self.vars.get(&i).expect("Value undefined.");
         assert!(!v.is_null(), "Value stored as null.");
         *v
     }
+
+    // fn compile_match(&mut self, arg: TypedNode, arms: Vec<(Pat, TypedNode)>) -> LLVMValueRef {
+    // let arg_ll = self.compile(arg);
+
+    // let end_block = self.func.append_bb(self.counter.next()).unwrap();
+    // arms.into_iter().map(|(p, )|)
+    // }
+
+    // fn compile_pattern(&mut self, p: Pat, a: LLVMValueRef) ->
 
     fn ll_type(&self, t: &Type) -> LLVMTypeRef {
         match *t {
@@ -264,7 +311,10 @@ impl<'a> Compiler<'a> {
                 let mut closure = [f_ty, cap];
                 unsafe { LLVMStructType(closure.as_mut_ptr(), closure.len() as u32, 0) }
             }
-            Type::Free(_) => self.ctx.int_type(64), // Assume Int
+            Type::Free(_) => {
+                eprintln!("Free type made to compilation!");
+                self.ctx.int_type(64) // Assume Int
+            }
         }
     }
 
