@@ -40,11 +40,11 @@ fn main() {
                 //.and_then(|e| {w::run_infer(&e).map_err(|e| format!("{:?}", e))} )
                 .map(desugar::desugar)
                 .map_err(String::from)
-                .map(|n| {println!("{:?}", n);n})
+                //.map(|n| {println!("{:?}", n);n})
                 .and_then(|e| {w_ds::run_infer(&e).map_err(|e| format!("{:?}", e))} )
                 .and_then(|n| back::compile(n).map_err(|e| format!("{}", e)))
         })
-        .map(|e| println!("{:?}", e))
+        .map(|e| e.map(|m| println!("{}", m)))
         .last();
 
 }

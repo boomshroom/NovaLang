@@ -73,15 +73,16 @@ impl TypedNode {
                                   c.iter().map(|&(_, ref t)| t.clone()).collect())
                 }
             }
-            TypedNode::App(ref f, _) => f.get_ret_type().unwrap(),
+            TypedNode::App(ref f, _) => f.get_ret_type().unwrap_or(Type::Free(TId::new())),
             TypedNode::Let(_, _, ref b) => b.get_type(),
             TypedNode::Match(_, _, ref b) => b.clone(),
         }
     }
 
     pub fn get_ret_type(&self) -> Option<Type> {
-        match *self {
-            TypedNode::Abs(_, ref b, _, _) => Some(b.get_type()),
+        match self.get_type() {
+            Type::Func(_, b) => Some(*b),
+            Type::Closure(_, b, _) => Some(*b),
             _ => None,
         }
     }
@@ -172,9 +173,9 @@ impl<T: Types> Types for Scheme<T> {
             Scheme::Type(t) => Scheme::Type(t.apply(s)),
             Scheme::Forall(t, v) => {
                 let mut s = s.clone();
-                v.iter().for_each(|&(id, _)| {
+                v.iter().map(|&(id, _)| {
                     s.remove(id);
-                });
+                }).last();
                 Scheme::Forall(t.apply(&s),
                                v.into_iter().map(|(id, c)| (id, c.apply(&s))).collect())
             }
@@ -772,7 +773,7 @@ pub fn run_infer(n: &NodeDS) -> Result<TypedNode, TypeError> {
         .collect();
 
     infer(n, &mut TypeEnv(env), &mut ids).and_then(|(info, t)| {
-        println!("{:?}", info);
+        //eprintln!("{:?}", info);
         info.test_constraints().map(|_| t)
     })
 }
