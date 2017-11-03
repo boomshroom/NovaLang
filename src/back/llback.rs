@@ -3,8 +3,10 @@ use super::super::desugar::{Pat, Arg};
 use super::super::w_ds::{TypedNode, Type};
 use llvm_sys::prelude::*;
 use llvm_sys::core::*;
+use llvm_sys::LLVMIntPredicate;
 use std::collections::HashMap;
 use std::ffi::{NulError, CString};
+use std::iter;
 
 struct Compiler<'a> {
     ctx: &'a Context,
@@ -62,6 +64,25 @@ fn null<T>() -> *mut T {
     0 as *mut T
 }
 
+struct Constr {
+	id: usize,
+	args: usize,
+	variants: usize, 
+}
+
+fn constructors(cons: &str) -> Constr {
+	match cons {
+		"True" => Constr{id: 1, args: 0, variants: 2},
+		"False" => Constr{id: 0, args: 0, variants: 2},
+		"()" => Constr{id: 0, args: 0, variants: 1},
+		cons => if cons.chars().all(|ch| ch == ',') {
+			Constr{id: 0, args: cons.len() + 1, variants: 1}
+		} else {
+			panic!("Undefined constructor: {}", cons)
+		},
+	}
+}
+
 impl<'a> Compiler<'a> {
     fn compile(&mut self, n: TypedNode) -> LLVMValueRef {
         match n {
@@ -69,6 +90,7 @@ impl<'a> Compiler<'a> {
             TypedNode::App(f, a) => self.compile_app(*f, *a),
             TypedNode::Var(i, t) => self.compile_var(i, t),
             TypedNode::Abs(i, b, arg, cap) => self.compile_abs(i, *b, arg, cap),
+            TypedNode::Match(e, a, t) => self.compile_match(*e, a, t),
             n => panic!("Unimplemented: {:?}", n),
         }
     }
@@ -270,14 +292,67 @@ impl<'a> Compiler<'a> {
         *v
     }
 
-    // fn compile_match(&mut self, arg: TypedNode, arms: Vec<(Pat, TypedNode)>) -> LLVMValueRef {
-    // let arg_ll = self.compile(arg);
+    fn compile_match(&mut self, arg: TypedNode, arms: Vec<(Pat, TypedNode)>, res: Type) -> LLVMValueRef {
+    	let res_type = self.ll_type(&res);
+	    let arg_ll = self.compile(arg);
 
-    // let end_block = self.func.append_bb(self.counter.next()).unwrap();
-    // arms.into_iter().map(|(p, )|)
-    // }
+	    let end_block = self.func.append_bb(self.counter.next()).unwrap();
+	    let catch = self.func.append_bb(self.counter.next()).unwrap();
 
-    // fn compile_pattern(&mut self, p: Pat, a: LLVMValueRef) ->
+	    let (mut vals, mut blks) : (Vec<LLVMValueRef>, Vec<LLVMBasicBlockRef>) = arms.into_iter().map(|(p, b)| {
+	    	let end_arm = self.func.append_bb(self.counter.next()).unwrap();
+	    	let else_blk = self.func.append_bb(self.counter.next()).unwrap();
+	    	let args = self.compile_pattern(p, arg_ll, *else_blk);
+	    	let old_vars = self.vars.clone();
+
+	    	self.vars.extend(args);
+	    	let val = self.compile(b);
+	    	unsafe { LLVMBuildBr(*self.build, *end_arm) };
+	    	let end = *end_arm;
+	    	self.build.set_block(end_arm);
+	    	unsafe { LLVMBuildBr(*self.build, *end_block) };
+	    	self.build.set_block(else_blk);
+	    	self.vars = old_vars;
+
+	    	(val, end)
+	    }).unzip();
+
+	    unsafe { LLVMBuildUnreachable(*self.build); }
+
+	    self.build.set_block(end_block);
+	    let phi = unsafe { LLVMBuildPhi(*self.build, res_type, self.counter.next().as_ptr()) };
+	    unsafe { LLVMAddIncoming(phi, vals.as_mut_ptr(), blks.as_mut_ptr(), vals.len() as u32) };
+	    phi
+    }
+
+    fn compile_pattern(&mut self, p: Pat, arg: LLVMValueRef, else_blk: LLVMBasicBlockRef) -> HashMap<Arg, LLVMValueRef> {
+    	match p {
+    		Pat::Prim(a) => a.into_iter().map(|a| (a, arg)).collect(),
+    		Pat::Lit(i) => {
+    			let pred = unsafe { LLVMBuildICmp(*self.build, LLVMIntPredicate::LLVMIntEQ, arg, wrap::sint(i, self.ctx.int_type(64)), self.counter.next().as_ptr()) };
+    			let new_blk = self.func.append_bb(self.counter.next()).unwrap();
+    			unsafe { LLVMBuildCondBr(*self.build, pred, *new_blk, else_blk) };
+    			self.build.set_block(new_blk);
+    			HashMap::new()
+    		},
+    		Pat::Cons(c, args) => {
+    			let cons = constructors(c.as_str());
+    			assert_eq!(args.len(), cons.args, "Incorrect number of arguments to constructor.");
+    			let arg = match cons.variants {
+    				1 => arg,
+    				_ => {
+	    				let tag = unsafe { LLVMBuildExtractValue(*self.build, arg, 1, self.counter.next().as_ptr()) };
+	    				let pred = unsafe { LLVMBuildICmp(*self.build, LLVMIntPredicate::LLVMIntEQ, tag, wrap::uint(cons.id as u64, LLVMTypeOf(tag)), self.counter.next().as_ptr()) };
+	    				let new_blk = self.func.append_bb(self.counter.next()).unwrap();
+		    			unsafe { LLVMBuildCondBr(*self.build, pred, *new_blk, else_blk) };
+		    			self.build.set_block(new_blk);
+	    				unsafe { LLVMBuildExtractValue(*self.build, arg, 0, self.counter.next().as_ptr()) }
+    				}
+    			};
+    			args.into_iter().enumerate().filter_map(|(i, a)| a.map(|a| (a, unsafe {LLVMBuildExtractValue(*self.build, arg, i as u32, self.counter.next().as_ptr())}))).collect()
+    		}
+    	}
+    }
 
     fn ll_type(&self, t: &Type) -> LLVMTypeRef {
         match *t {
