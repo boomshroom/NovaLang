@@ -1,6 +1,7 @@
 use super::wrap::{self, Context, Module, Builder, Function};
 use super::super::desugar::{Pat, Arg};
-use super::super::w_ds::{TypedNode, Type};
+use super::super::w_ds::Type;
+use super::super::monomorph::Node;
 use llvm_sys::prelude::*;
 use llvm_sys::core::*;
 use llvm_sys::LLVMIntPredicate;
@@ -12,7 +13,7 @@ struct Compiler<'a> {
     ctx: &'a Context,
     lmod: &'a Module<'a>,
     build: Builder<'a>,
-    vars: HashMap<Arg, LLVMValueRef>,
+    vars: HashMap<(Arg, Type), LLVMValueRef>,
     func: Function<'a>,
     counter: &'a mut Counter,
 }
@@ -29,7 +30,11 @@ impl Counter {
     }
 }
 
-pub fn compile(n: TypedNode) -> Result<String, NulError> {
+fn unit_struct(ctx: &Context) -> LLVMValueRef {
+	unsafe { LLVMConstStructInContext(**ctx, null(), 0, 0) }
+}
+
+pub fn compile(n: Node) -> Result<String, NulError> {
     let ctx = Context::new();
     let modl = ctx.module("test")?;
     let mut c = Counter::new();
@@ -44,6 +49,10 @@ pub fn compile(n: TypedNode) -> Result<String, NulError> {
         func: f,
         counter: &mut c,
     };
+
+
+    comp.vars.insert((Arg::Ident(String::from("True")), Type::Bool), unsafe { LLVMConstStructInContext(*ctx, [unit_struct(&ctx), wrap::uint(1, ctx.int_type(1))].as_mut_ptr(), 2, 0) });
+    comp.vars.insert((Arg::Ident(String::from("False")), Type::Bool), unsafe { LLVMConstStructInContext(*ctx, [unit_struct(&ctx), wrap::uint(0, ctx.int_type(1))].as_mut_ptr(), 2, 0) });
 
     comp.build.set_block(comp.func.append_bb("entry")?);
 
@@ -65,32 +74,58 @@ fn null<T>() -> *mut T {
 }
 
 struct Constr {
-	id: usize,
-	args: usize,
-	variants: usize, 
+    id: usize,
+    args: usize,
+    variants: usize,
 }
 
 fn constructors(cons: &str) -> Constr {
-	match cons {
-		"True" => Constr{id: 1, args: 0, variants: 2},
-		"False" => Constr{id: 0, args: 0, variants: 2},
-		"()" => Constr{id: 0, args: 0, variants: 1},
-		cons => if cons.chars().all(|ch| ch == ',') {
-			Constr{id: 0, args: cons.len() + 1, variants: 1}
-		} else {
-			panic!("Undefined constructor: {}", cons)
-		},
-	}
+    match cons {
+        "True" => {
+            Constr {
+                id: 1,
+                args: 0,
+                variants: 2,
+            }
+        }
+        "False" => {
+            Constr {
+                id: 0,
+                args: 0,
+                variants: 2,
+            }
+        }
+        "()" => {
+            Constr {
+                id: 0,
+                args: 0,
+                variants: 1,
+            }
+        }
+        cons => {
+            if cons.chars().all(|ch| ch == ',') {
+                Constr {
+                    id: 0,
+                    args: cons.len() + 1,
+                    variants: 1,
+                }
+            } else {
+                panic!("Undefined constructor: {}", cons)
+            }
+        }
+    }
 }
 
 impl<'a> Compiler<'a> {
-    fn compile(&mut self, n: TypedNode) -> LLVMValueRef {
+
+    fn compile(&mut self, n: Node) -> LLVMValueRef {
         match n {
-            TypedNode::Lit(i) => self.compile_lit(i),
-            TypedNode::App(f, a) => self.compile_app(*f, *a),
-            TypedNode::Var(i, t) => self.compile_var(i, t),
-            TypedNode::Abs(i, b, arg, cap) => self.compile_abs(i, *b, arg, cap),
-            TypedNode::Match(e, a, t) => self.compile_match(*e, a, t),
+            Node::Lit(i) => self.compile_lit(i),
+            Node::App(f, a) => self.compile_app(*f, *a),
+            Node::Var(i, t) => self.compile_var(i, t),
+            Node::Abs(i, b, arg, cap) => self.compile_abs(i, *b, arg, cap),
+            Node::Match(e, a, t) => self.compile_match(*e, a, t),
+            Node::Let(i, e, b) => self.compile_let(Arg::Ident(i), *e, *b),
             n => panic!("Unimplemented: {:?}", n),
         }
     }
@@ -99,7 +134,7 @@ impl<'a> Compiler<'a> {
         wrap::sint(l, self.ll_type(&Type::Int))
     }
 
-    fn compile_app(&mut self, f: TypedNode, a: TypedNode) -> LLVMValueRef {
+    fn compile_app(&mut self, f: Node, a: Node) -> LLVMValueRef {
         let f_ty = f.get_type();
         eprintln!("{:?}", f_ty);
         let f = self.compile(f);
@@ -137,14 +172,14 @@ impl<'a> Compiler<'a> {
 
     fn compile_abs(&mut self,
                    i: Option<Arg>,
-                   b: TypedNode,
+                   b: Node,
                    arg: Type,
                    cap: Vec<(Arg, Type)>)
                    -> LLVMValueRef {
         // let ll_type = self.ll_type(&b.get_type());
         match cap.len() {
             0 => {
-                let ty = Type::Func(Box::new(arg), Box::new(b.get_type()));
+                let ty = Type::Func(Box::new(arg.clone()), Box::new(b.get_type()));
                 // eprintln!("Genning function. ({:?})", ty);
                 let ll_type = self.ll_type(&ty);
 
@@ -177,7 +212,7 @@ impl<'a> Compiler<'a> {
 	                new_ctx.build.set_block(new_ctx.func.append_bb("_entry").unwrap());
 
 	                i.map(|i| {
-	                    new_ctx.vars.insert(i, {
+	                    new_ctx.vars.insert((i, arg), {
 	                        assert_eq!( unsafe { LLVMCountParams(*new_ctx.func) }, 1,
 	                    	"Function doesn't have 1 argument.");
 	                        let v = unsafe { LLVMGetFirstParam(*new_ctx.func) };
@@ -194,7 +229,7 @@ impl<'a> Compiler<'a> {
                 *f_obj
             }
             _ => {
-                let ty = Type::Closure(Box::new(arg),
+                let ty = Type::Closure(Box::new(arg.clone()),
                                        Box::new(b.get_type()),
                                        cap.iter().map(|&(_, ref t)| t.clone()).collect());
                 eprintln!("Genning closure. ({:?})", ty);
@@ -234,7 +269,7 @@ impl<'a> Compiler<'a> {
                     let capts = unsafe { LLVMGetParam(*new_ctx.func, 0) };
                     let vars: Vec<_> = cap.into_iter()
                         .enumerate()
-                        .map(|(i, (v, _))| {
+                        .map(|(i, v)| {
                             (v,
                              unsafe {
                                 LLVMBuildExtractValue(*new_ctx.build,
@@ -245,7 +280,8 @@ impl<'a> Compiler<'a> {
                         })
                         .collect();
                     new_ctx.vars.extend(vars);
-                    i.map(|i| new_ctx.vars.insert(i, unsafe { LLVMGetParam(*new_ctx.func, 1) }));
+                    i.map(|i|
+                    	new_ctx.vars.insert((i, arg), unsafe { LLVMGetParam(*new_ctx.func, 1) }));
 
                     eprintln!("Recursing.");
                     unsafe { LLVMBuildRet(*new_ctx.build, new_ctx.compile(b)) };
@@ -285,73 +321,132 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn compile_var(&mut self, i: Arg, _: Type) -> LLVMValueRef {
+    fn compile_var(&mut self, i: Arg, t: Type) -> LLVMValueRef {
         // eprintln!("{:?}", i);
-        let v = self.vars.get(&i).expect("Value undefined.");
+        let v = self.vars.get(&(i, t)).expect("Value undefined.");
         assert!(!v.is_null(), "Value stored as null.");
         *v
     }
 
-    fn compile_match(&mut self, arg: TypedNode, arms: Vec<(Pat, TypedNode)>, res: Type) -> LLVMValueRef {
-    	let res_type = self.ll_type(&res);
-	    let arg_ll = self.compile(arg);
+    fn compile_match(&mut self, arg: Node, arms: Vec<(Pat, Node)>, res: Type) -> LLVMValueRef {
+        let res_type = self.ll_type(&res);
+        let arg_type = arg.get_type();
+        let arg_ll = self.compile(arg);
 
-	    let end_block = self.func.append_bb(self.counter.next()).unwrap();
-	    let catch = self.func.append_bb(self.counter.next()).unwrap();
+        let end_block = self.func.append_bb(self.counter.next()).unwrap();
+        let catch = self.func.append_bb(self.counter.next()).unwrap();
 
-	    let (mut vals, mut blks) : (Vec<LLVMValueRef>, Vec<LLVMBasicBlockRef>) = arms.into_iter().map(|(p, b)| {
-	    	let end_arm = self.func.append_bb(self.counter.next()).unwrap();
-	    	let else_blk = self.func.append_bb(self.counter.next()).unwrap();
-	    	let args = self.compile_pattern(p, arg_ll, *else_blk);
-	    	let old_vars = self.vars.clone();
+        let (mut vals, mut blks): (Vec<LLVMValueRef>, Vec<LLVMBasicBlockRef>) = arms.into_iter()
+            .map(|(p, b)| {
+                let end_arm = self.func.append_bb(self.counter.next()).unwrap();
+                let else_blk = self.func.append_bb(self.counter.next()).unwrap();
+                let args = self.compile_pattern(p, &arg_type, arg_ll, *else_blk);
+                let old_vars = self.vars.clone();
 
-	    	self.vars.extend(args);
-	    	let val = self.compile(b);
-	    	unsafe { LLVMBuildBr(*self.build, *end_arm) };
-	    	let end = *end_arm;
-	    	self.build.set_block(end_arm);
-	    	unsafe { LLVMBuildBr(*self.build, *end_block) };
-	    	self.build.set_block(else_blk);
-	    	self.vars = old_vars;
+                self.vars.extend(args);
+                let val = self.compile(b);
+                unsafe { LLVMBuildBr(*self.build, *end_arm) };
+                let end = *end_arm;
+                self.build.set_block(end_arm);
+                unsafe { LLVMBuildBr(*self.build, *end_block) };
+                self.build.set_block(else_blk);
+                self.vars = old_vars;
 
-	    	(val, end)
-	    }).unzip();
+                (val, end)
+            })
+            .unzip();
 
-	    unsafe { LLVMBuildUnreachable(*self.build); }
+        unsafe {
+            LLVMBuildUnreachable(*self.build);
+        }
 
-	    self.build.set_block(end_block);
-	    let phi = unsafe { LLVMBuildPhi(*self.build, res_type, self.counter.next().as_ptr()) };
-	    unsafe { LLVMAddIncoming(phi, vals.as_mut_ptr(), blks.as_mut_ptr(), vals.len() as u32) };
-	    phi
+        self.build.set_block(end_block);
+        let phi = unsafe { LLVMBuildPhi(*self.build, res_type, self.counter.next().as_ptr()) };
+        unsafe { LLVMAddIncoming(phi, vals.as_mut_ptr(), blks.as_mut_ptr(), vals.len() as u32) };
+        phi
     }
 
-    fn compile_pattern(&mut self, p: Pat, arg: LLVMValueRef, else_blk: LLVMBasicBlockRef) -> HashMap<Arg, LLVMValueRef> {
-    	match p {
-    		Pat::Prim(a) => a.into_iter().map(|a| (a, arg)).collect(),
-    		Pat::Lit(i) => {
-    			let pred = unsafe { LLVMBuildICmp(*self.build, LLVMIntPredicate::LLVMIntEQ, arg, wrap::sint(i, self.ctx.int_type(64)), self.counter.next().as_ptr()) };
-    			let new_blk = self.func.append_bb(self.counter.next()).unwrap();
-    			unsafe { LLVMBuildCondBr(*self.build, pred, *new_blk, else_blk) };
-    			self.build.set_block(new_blk);
-    			HashMap::new()
-    		},
-    		Pat::Cons(c, args) => {
-    			let cons = constructors(c.as_str());
-    			assert_eq!(args.len(), cons.args, "Incorrect number of arguments to constructor.");
-    			let arg = match cons.variants {
-    				1 => arg,
-    				_ => {
-	    				let tag = unsafe { LLVMBuildExtractValue(*self.build, arg, 1, self.counter.next().as_ptr()) };
-	    				let pred = unsafe { LLVMBuildICmp(*self.build, LLVMIntPredicate::LLVMIntEQ, tag, wrap::uint(cons.id as u64, LLVMTypeOf(tag)), self.counter.next().as_ptr()) };
-	    				let new_blk = self.func.append_bb(self.counter.next()).unwrap();
-		    			unsafe { LLVMBuildCondBr(*self.build, pred, *new_blk, else_blk) };
-		    			self.build.set_block(new_blk);
-	    				unsafe { LLVMBuildExtractValue(*self.build, arg, 0, self.counter.next().as_ptr()) }
-    				}
-    			};
-    			args.into_iter().enumerate().filter_map(|(i, a)| a.map(|a| (a, unsafe {LLVMBuildExtractValue(*self.build, arg, i as u32, self.counter.next().as_ptr())}))).collect()
-    		}
-    	}
+    fn compile_pattern(&mut self,
+                       p: Pat,
+                       ty: &Type,
+                       arg: LLVMValueRef,
+                       else_blk: LLVMBasicBlockRef)
+                       -> HashMap<(Arg, Type), LLVMValueRef> {
+        match p {
+            Pat::Prim(a) => a.into_iter().map(|a| ((a, ty.clone()), arg)).collect(),
+            Pat::Lit(i) => {
+                let pred = unsafe {
+                    LLVMBuildICmp(*self.build,
+                                  LLVMIntPredicate::LLVMIntEQ,
+                                  arg,
+                                  wrap::sint(i, self.ctx.int_type(64)),
+                                  self.counter.next().as_ptr())
+                };
+                let new_blk = self.func.append_bb(self.counter.next()).unwrap();
+                unsafe { LLVMBuildCondBr(*self.build, pred, *new_blk, else_blk) };
+                self.build.set_block(new_blk);
+                HashMap::new()
+            }
+            Pat::Cons(c, args) => {
+                let cons = constructors(c.as_str());
+                assert_eq!(args.len(),
+                           cons.args,
+                           "Incorrect number of arguments to constructor.");
+                let arg = match cons.variants {
+                    1 => arg,
+                    _ => {
+                        let tag = unsafe {
+                            LLVMBuildExtractValue(*self.build, arg, 1, self.counter.next().as_ptr())
+                        };
+                        let pred = unsafe {
+                            LLVMBuildICmp(*self.build,
+                                          LLVMIntPredicate::LLVMIntEQ,
+                                          tag,
+                                          wrap::uint(cons.id as u64, LLVMTypeOf(tag)),
+                                          self.counter.next().as_ptr())
+                        };
+                        let new_blk = self.func.append_bb(self.counter.next()).unwrap();
+                        unsafe { LLVMBuildCondBr(*self.build, pred, *new_blk, else_blk) };
+                        self.build.set_block(new_blk);
+                        unsafe {
+                            LLVMBuildExtractValue(*self.build, arg, 0, self.counter.next().as_ptr())
+                        }
+                    }
+                };
+                let arg_types = match ty {
+                    &Type::Tuple(ref ts) => &**ts,
+                    _ => &[],
+                };
+                args.into_iter()
+                    .zip(arg_types)
+                    .enumerate()
+                    .filter_map(|(i, (a, t))| {
+                        a.map(|a| {
+                            ((a, t.clone()),
+                             unsafe {
+                                LLVMBuildExtractValue(*self.build,
+                                                      arg,
+                                                      i as u32,
+                                                      self.counter.next().as_ptr())
+                            })
+                        })
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    fn compile_let(&mut self, i: Arg, e: Node, b: Node) -> LLVMValueRef {
+        let t = (i, e.get_type());
+        let e = self.compile(e);
+        let old = self.vars.insert(t.clone(), e);
+        let v = self.compile(b);
+
+        match old {
+            Some(v) => self.vars.insert(t, v),
+            None => self.vars.remove(&t),
+        };
+        v
     }
 
     fn ll_type(&self, t: &Type) -> LLVMTypeRef {

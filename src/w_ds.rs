@@ -401,7 +401,7 @@ pub enum TypeError {
 }
 
 impl Type {
-    fn unify(self, other: Type) -> Result<TypeInfo, TypeError> {
+    pub fn unify(self, other: Type) -> Result<TypeInfo, TypeError> {
         match (self, other) {
             (Type::Func(l1, r1), Type::Func(l2, r2)) => {
                 let s1 = l1.unify(*l2)?;
@@ -552,7 +552,7 @@ impl Type {
 fn infer_pat(p: &Pat, next: &mut TId) -> Result<Type, TypeError> {
     match p {
         &Pat::Prim(_) => Ok(next.next_t()),
-        &Pat::Lit(_) => Ok(next.next_t()),
+        &Pat::Lit(_) => Ok(Type::Int),
         &Pat::Cons(ref c, ref args) => {
             if c.as_str() == "True" || c.as_str() == "False" {
                 if args.len() == 0 {

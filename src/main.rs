@@ -3,14 +3,14 @@ use std::io::{stdin, BufRead};
 
 #[macro_use]
 extern crate nom;
-//extern crate llvm_sys;
+extern crate llvm_sys;
 mod parser;
 // mod w;
 mod desugar;
 mod w_ds;
 mod monomorph;
 
-//mod back;
+mod back;
 // mod simple;
 // use simple::Expr;
 // mod lambda;
@@ -44,9 +44,9 @@ fn main() {
                 //.map(|n| {println!("{:?}", n);n})
                 .and_then(|e| {w_ds::run_infer(&e).map_err(|e| format!("{:?}", e))} )
                 .map(monomorph::monomorph)
-            // .and_then(|n| back::compile(n).map_err(|e| format!("{}", e)))
+                .and_then(|n| back::compile(n).map_err(|e| format!("{}", e)))
         })
-        .map(|e| e.map(|m| println!("{:?}", m)))
+        .map(|e| e.map(|m| println!("{}", m)))
         .last();
 
 }
