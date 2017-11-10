@@ -13,7 +13,7 @@ struct Compiler<'a> {
     ctx: &'a Context,
     lmod: &'a Module<'a>,
     build: Builder<'a>,
-    vars: HashMap<(Arg, Type), LLVMValueRef>,
+    vars: Vec<(Arg, Type, LLVMValueRef)>,
     func: Function<'a>,
     counter: &'a mut Counter,
 }
@@ -45,14 +45,14 @@ pub fn compile(n: Node) -> Result<String, NulError> {
         ctx: &ctx,
         lmod: &modl,
         build: ctx.builder(),
-        vars: HashMap::new(),
+        vars: Vec::new(),
         func: f,
         counter: &mut c,
     };
 
 
-    comp.vars.insert((Arg::Ident(String::from("True")), Type::Bool), unsafe { LLVMConstStructInContext(*ctx, [unit_struct(&ctx), wrap::uint(1, ctx.int_type(1))].as_mut_ptr(), 2, 0) });
-    comp.vars.insert((Arg::Ident(String::from("False")), Type::Bool), unsafe { LLVMConstStructInContext(*ctx, [unit_struct(&ctx), wrap::uint(0, ctx.int_type(1))].as_mut_ptr(), 2, 0) });
+    comp.vars.push((Arg::Ident(String::from("True")), Type::Bool, unsafe { LLVMConstStructInContext(*ctx, [unit_struct(&ctx), wrap::uint(1, ctx.int_type(1))].as_mut_ptr(), 2, 0) }));
+    comp.vars.push((Arg::Ident(String::from("False")), Type::Bool, unsafe { LLVMConstStructInContext(*ctx, [unit_struct(&ctx), wrap::uint(0, ctx.int_type(1))].as_mut_ptr(), 2, 0) }));
 
     comp.build.set_block(comp.func.append_bb("entry")?);
 
@@ -199,7 +199,7 @@ impl<'a> Compiler<'a> {
 	                    ctx: self.ctx,
 	                    lmod: self.lmod,
 	                    build: self.ctx.builder(),
-	                    vars: HashMap::new(),
+	                    vars: Vec::new(),
 	                    func: f_obj,
 	                    counter: self.counter,
 	                };
@@ -212,13 +212,13 @@ impl<'a> Compiler<'a> {
 	                new_ctx.build.set_block(new_ctx.func.append_bb("_entry").unwrap());
 
 	                i.map(|i| {
-	                    new_ctx.vars.insert((i, arg), {
+	                    new_ctx.vars.push((i, arg, {
 	                        assert_eq!( unsafe { LLVMCountParams(*new_ctx.func) }, 1,
 	                    	"Function doesn't have 1 argument.");
 	                        let v = unsafe { LLVMGetFirstParam(*new_ctx.func) };
 	                        assert!(!v.is_null(), "Parameter is null.");
 	                        v
-	                    })
+	                    }))
 	                });
 
 	                unsafe { LLVMBuildRet(*new_ctx.build, new_ctx.compile(b)) };
@@ -251,7 +251,7 @@ impl<'a> Compiler<'a> {
                         ctx: self.ctx,
                         lmod: self.lmod,
                         build: self.ctx.builder(),
-                        vars: HashMap::new(),
+                        vars: Vec::new(),
                         func: f_obj,
                         counter: self.counter,
                     };
@@ -267,10 +267,10 @@ impl<'a> Compiler<'a> {
                     // frees.iter().enumerate().map(|(i, v)| )
 
                     let capts = unsafe { LLVMGetParam(*new_ctx.func, 0) };
-                    let vars: Vec<_> = cap.into_iter()
+                    new_ctx.vars = cap.into_iter()
                         .enumerate()
-                        .map(|(i, v)| {
-                            (v,
+                        .map(|(i, (v, t))| {
+                            (v, t,
                              unsafe {
                                 LLVMBuildExtractValue(*new_ctx.build,
                                                       capts,
@@ -279,9 +279,9 @@ impl<'a> Compiler<'a> {
                             })
                         })
                         .collect();
-                    new_ctx.vars.extend(vars);
+                    //new_ctx.vars.extend(vars);
                     i.map(|i|
-                    	new_ctx.vars.insert((i, arg), unsafe { LLVMGetParam(*new_ctx.func, 1) }));
+                    	new_ctx.vars.push((i, arg, unsafe { LLVMGetParam(*new_ctx.func, 1) })));
 
                     eprintln!("Recursing.");
                     unsafe { LLVMBuildRet(*new_ctx.build, new_ctx.compile(b)) };
@@ -323,9 +323,13 @@ impl<'a> Compiler<'a> {
 
     fn compile_var(&mut self, i: Arg, t: Type) -> LLVMValueRef {
         // eprintln!("{:?}", i);
-        let v = self.vars.get(&(i, t)).expect("Value undefined.");
-        assert!(!v.is_null(), "Value stored as null.");
-        *v
+        for &(ref a, ref ty, v) in self.vars.iter().rev() {
+        	if a == &i && ty.clone().unify(t.clone()).is_ok() {
+        		assert!(!v.is_null(), "Value stored as null.");
+        		return v
+        	}
+        }
+        panic!("Value undefined: {:?} :: {:?}", i, t)
     }
 
     fn compile_match(&mut self, arg: Node, arms: Vec<(Pat, Node)>, res: Type) -> LLVMValueRef {
@@ -341,16 +345,19 @@ impl<'a> Compiler<'a> {
                 let end_arm = self.func.append_bb(self.counter.next()).unwrap();
                 let else_blk = self.func.append_bb(self.counter.next()).unwrap();
                 let args = self.compile_pattern(p, &arg_type, arg_ll, *else_blk);
-                let old_vars = self.vars.clone();
+                //let old_vars = self.vars.clone();
+                let old_len = self.vars.len();
 
-                self.vars.extend(args);
+                self.vars.extend(args.into_iter().map(|((a, b), c)| (a, b, c)));
                 let val = self.compile(b);
                 unsafe { LLVMBuildBr(*self.build, *end_arm) };
                 let end = *end_arm;
                 self.build.set_block(end_arm);
                 unsafe { LLVMBuildBr(*self.build, *end_block) };
                 self.build.set_block(else_blk);
-                self.vars = old_vars;
+
+                //self.vars = old_vars;
+                self.vars.truncate(old_len);
 
                 (val, end)
             })
@@ -437,15 +444,11 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_let(&mut self, i: Arg, e: Node, b: Node) -> LLVMValueRef {
-        let t = (i, e.get_type());
+        let t = e.get_type();
         let e = self.compile(e);
-        let old = self.vars.insert(t.clone(), e);
+        self.vars.push((i, t.clone(), e));
         let v = self.compile(b);
-
-        match old {
-            Some(v) => self.vars.insert(t, v),
-            None => self.vars.remove(&t),
-        };
+        self.vars.pop();
         v
     }
 
