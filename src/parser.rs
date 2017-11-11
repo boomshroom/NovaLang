@@ -40,6 +40,7 @@ pub enum Type {
     Func(Box<Type>, Box<Type>),
     Tuple(Vec<Type>),
     Box(Box<Type>),
+    Param(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +57,13 @@ pub struct Defn {
     name: String,
     args: Vec<Pattern>,
     val: Node,
+}
+
+#[derive(Debug)]
+pub struct DataDecl {
+    name: String,
+    params: Vec<String>,
+    variants: Vec<(String, Vec<Type>)>
 }
 
 impl Op {
@@ -140,6 +148,11 @@ named!(reserved<()>, alt_complete!(
 named!(int<Literal>, map!(map_res!(map_res!(digit, str::from_utf8),
     FromStr::from_str), Literal::Int));
 named!(literal<Literal>, alt_complete!(int | bool_lit));
+
+named!(upper_ident<String>, do_parse!(
+    not!(reserved) >>
+    
+));
 
 named!(ident<String>, do_parse!(
 	not!(reserved) >>
@@ -274,7 +287,11 @@ named!(defn<Defn>, ws_nl!(do_parse!(
 	(Defn{name: i, args: a, val: e})
 )));
 
-
+named!(data_decl<DataDecl>, ws_nl!(do_parse!(
+    tag!("data") >>
+    name: ident >>
+    params: ws_nl!(many0!(ident))
+)));
 
 pub fn test_lambda() {
     assert_eq!(expr(b"(\\x : Int -> x)"), IResult::Done([].as_ref(),
