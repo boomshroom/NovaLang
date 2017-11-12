@@ -1,5 +1,7 @@
 // #![feature(box_patterns,const_fn,drop_types_in_const)]
-use std::io::{stdin, BufRead};
+use std::io::Read;
+use std::env;
+use std::fs::File;
 
 #[macro_use]
 extern crate nom;
@@ -7,15 +9,16 @@ extern crate llvm_sys;
 mod parser;
 // mod w;
 mod desugar;
-mod w_ds;
-mod monomorph;
+//mod w_ds;
+//mod monomorph;
 
-mod back;
+//mod back;
 // mod simple;
 // use simple::Expr;
 // mod lambda;
 // use lambda::Expr;
-use parser::Node;
+use parser::Module;
+use desugar::ModDS;
 // use types::TypeEnv;
 // mod eval;
 // use eval::Value;
@@ -28,6 +31,19 @@ use parser::Node;
 fn main() {
     parser::test_lambda();
     parser::test_exprs();
+
+    let filename = env::args().nth(1).unwrap_or(String::from("Main.nva"));
+
+    let mut file = Vec::new();
+    File::open(filename.as_str())
+        .expect(format!("File not found: {}", filename).as_str())
+        .read_to_end(&mut file)
+        .expect("Couldn't read file.");
+
+    let m = Module::new(file.as_slice()).expect("Parse error.");
+
+    println!("{:#?}", ModDS::new(m));
+    /*
     let stdin = stdin();
     stdin
         .lock()
@@ -49,5 +65,5 @@ fn main() {
         })
         .map(|e| e.map(|m| println!("{}", m)))
         .last();
-
+    */
 }

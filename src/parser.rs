@@ -1,6 +1,6 @@
 use std::str::{self, FromStr};
 use std::iter::FromIterator;
-use nom::{IResult, IError, digit, alphanumeric, alpha, anychar, line_ending};
+use nom::{IResult, IError, digit, alphanumeric, anychar, line_ending};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Node {
@@ -41,6 +41,7 @@ pub enum Type {
     Func(Box<Type>, Box<Type>),
     Tuple(Vec<Type>),
     Box(Box<Type>),
+    Ptr(Box<Type>),
     Param(String),
 }
 
@@ -55,9 +56,9 @@ pub enum Op {
 
 #[derive(Debug, PartialEq)]
 pub struct Defn {
-    name: String,
-    args: Vec<Pattern>,
-    val: Node,
+    pub name: String,
+    pub args: Vec<Pattern>,
+    pub val: Node,
 }
 
 #[derive(Debug, PartialEq)]
@@ -72,6 +73,13 @@ pub enum Decl {
     Defn(Defn),
     Type(String, Type),
     Data(DataDecl),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Module {
+    pub name: String,
+    pub exports: Option<Vec<String>>,
+    pub decls: Vec<Decl>,
 }
 
 impl Op {
@@ -94,6 +102,12 @@ impl Node {
 impl Type {
     pub fn new(src: &str) -> Result<Type, IError> {
         type_expr(src.as_bytes()).to_full_result()
+    }
+}
+
+impl Module {
+    pub fn new(src: &[u8]) -> Result<Module, IError> {
+        module(src).to_full_result()
     }
 }
 
@@ -145,7 +159,8 @@ named!(keyword<&str>, map_res!(alt_complete!(
 named!(builtin_type<Type>, switch!(alphanumeric,
 	b"Int" => value!(Type::Int) |
 	b"Bool" => value!(Type::Bool) |
-    b"Box" => map!(type_atom, |t| Type::Box(Box::new(t)))
+    b"Box" => map!(ws_nl!(type_atom), |t| Type::Box(Box::new(t))) |
+    b"Ptr" => map!(ws_nl!(type_atom), |t| Type::Ptr(Box::new(t)))
 ));
 named!(bool_lit<Literal>, switch!(alphanumeric,
 	b"True" => value!(Literal::True) |
@@ -216,7 +231,8 @@ named!(tuple_pattern<Pattern>, map!(ws_nl!(delimited!(
 }));
 
 named!(constr_pattern<Pattern>, map!(
-    ws_nl!(tuple!(upper_ident, many0!(pattern_atom))),
+    ws_nl!(alt_complete!(tuple!(upper_ident, many0!(pattern_atom)) |
+                         tuple!(lower_ident, many1!(pattern_atom)))),
     |(c, v)| Pattern::Constructor(c, v)
 ));
 
@@ -318,6 +334,16 @@ named!(top_level<Vec<Decl>>, separated_nonempty_list_complete!(line_ending, alt_
     map!(data_decl, Decl::Data) | map!(decl, |(i,t)| Decl::Type(i, t)) | map!(defn, Decl::Defn)
 )));
 
+named!(module<Module>, ws_nl!(do_parse!(
+    tag!("module") >>
+    name: upper_ident >>
+    exports: ws!(delimited!(tag!("("), alt_complete!(
+        value!(None, tag!("..")) |
+        map!(separated_list_complete!(tag!(","), ident), Some)) ,tag!(")"))) >>
+    decls: top_level >>
+    (Module{name: name.to_owned(), exports: exports, decls: decls})
+)));
+
 pub fn test_lambda() {
     assert_eq!(expr(b"(\\x : Int -> x)"), IResult::Done([].as_ref(),
         Node::Lambda(Pattern::Ident("x".into()),
@@ -339,10 +365,29 @@ pub fn test_exprs() {
         Box::new(Node::Ident("e".to_owned())))));
     assert_eq!(expr(b"0"), IResult::Done(&[] as &[u8], Node::Lit(Literal::Int(0))));
     eprintln!("");
-    eprintln!("{:?}", type_expr(b"Int").unwrap());
-    eprintln!("{:?}", type_expr(b"Bool").unwrap());
-    eprintln!("{:?}", type_expr(b"(Int, Int)").unwrap());
-    eprintln!("{:?}", type_expr(b"Int -> Int -> Bool").unwrap());
+    let expected = IResult::Done(&[] as &[u8], Type::Int);
+    assert_eq!(type_expr(b"Int"), expected);
+    let expected = IResult::Done(&[] as &[u8], Type::Bool);
+    assert_eq!(type_expr(b"Bool"), expected);
+    let expected = IResult::Done(&[] as &[u8], Type::Tuple(vec![Type::Int, Type::Int]));
+    assert_eq!(type_expr(b"(Int, Int)"), expected);
+    let expected = IResult::Done(
+        &[] as &[u8],
+        Type::Func(
+            Box::new(Type::Int),
+            Box::new(Type::Func(Box::new(Type::Int), Box::new(Type::Bool))),
+        ),
+    );
+    assert_eq!(type_expr(b"(Int -> Int -> Bool)"), expected);
+    let expected = IResult::Done(&[] as &[u8], Type::Ptr(Box::new(Type::Unit)));
+    assert_eq!(type_expr(b"Ptr ()"), expected);
+    let expected = IResult::Done(
+        &[] as &[u8],
+        Type::Tuple(
+            vec![Type::Int, Type::Ptr(Box::new(Type::Ptr(Box::new(Type::Unit))))],
+        ),
+    );
+    assert_eq!(type_expr(b"(Int, Ptr (Ptr ()))"), expected);
     eprintln!("");
     eprintln!("{:?}", decl(b"eq : Int -> Int -> Bool").unwrap());
     eprintln!("{:?}", defn(b"eq (Nat x) y = iszero (x - y)").unwrap());

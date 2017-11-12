@@ -1,4 +1,4 @@
-use super::parser::{Node, Pattern, Literal, Op};
+use super::parser::{Node, Pattern, Literal, Op, DataDecl, Module, Decl, Defn};
 use std::iter;
 use std::collections::HashSet;
 use std::hash::Hash;
@@ -28,6 +28,14 @@ pub enum Arg {
     Internal(u64),
 }
 
+#[derive(Debug)]
+pub struct ModDS {
+    name: String,
+    exports: Option<Vec<String>>,
+    types: Vec<DataDecl>,
+    defns: Vec<(String, NodeDS)>,
+}
+
 fn op_to_func(o: Op) -> Arg {
     Arg::Ident(String::from(match o {
         Op::Add => "+",
@@ -53,6 +61,29 @@ fn tuple_fn(len: usize) -> String {
 
 pub fn desugar(n: Node) -> NodeDS {
     desugar_priv(n, &mut Counter(0))
+}
+
+impl ModDS {
+    pub fn new(m: Module) -> ModDS {
+        let Module{name, exports, decls} = m;
+        let mut types = Vec::new();
+        let mut defns = Vec::new();
+        for d in decls {
+            match d {
+                Decl::Defn(Defn{name, args, val}) => {
+                    let temp = Node::Let(vec![(Pattern::Constructor(String::from("a"), args), val)], Box::new(Node::Lit(Literal::Int(0))));
+                    if let NodeDS::Let(_, body, _) = desugar(temp) {
+                        defns.push((name, *body));
+                    } else {
+                        unreachable!();
+                    }
+                }
+                Decl::Type(_, _) => {}, // TODO
+                Decl::Data(d) => types.push(d),
+            };
+        }
+        ModDS{name, exports, types, defns}
+    }
 }
 
 fn desugar_priv(n: Node, next: &mut Counter) -> NodeDS {
