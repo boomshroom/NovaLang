@@ -1,5 +1,6 @@
 use std::str::{self, FromStr};
-use nom::{IResult, IError, digit, alphanumeric};
+use std::iter::FromIterator;
+use nom::{IResult, IError, digit, alphanumeric, alpha, anychar, line_ending};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Node {
@@ -52,18 +53,25 @@ pub enum Op {
     Equal,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Defn {
     name: String,
     args: Vec<Pattern>,
     val: Node,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct DataDecl {
     name: String,
     params: Vec<String>,
-    variants: Vec<(String, Vec<Type>)>
+    variants: Vec<(String, Vec<Type>)>,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Decl {
+    Defn(Defn),
+    Type(String, Type),
+    Data(DataDecl),
 }
 
 impl Op {
@@ -118,11 +126,14 @@ fn parse_bin_expr_full(src: &[u8], prec: i64, lhs: Node) -> IResult<&[u8], Node>
     };
     if tok.prec() > prec {
         let (i2, right) = try_parse!(i1, ws_nl!(apply!(parse_bin_expr, tok.prec())));
-        parse_bin_expr_full(i2,
-                            prec,
-                            Node::FunCall(Box::new(Node::FunCall(Box::new(Node::Op(tok)),
-                                                                 Box::new(lhs))),
-                                          Box::new(right)))
+        parse_bin_expr_full(
+            i2,
+            prec,
+            Node::FunCall(
+                Box::new(Node::FunCall(Box::new(Node::Op(tok)), Box::new(lhs))),
+                Box::new(right),
+            ),
+        )
     } else {
         IResult::Done(src, lhs)
     }
@@ -149,17 +160,23 @@ named!(int<Literal>, map!(map_res!(map_res!(digit, str::from_utf8),
     FromStr::from_str), Literal::Int));
 named!(literal<Literal>, alt_complete!(int | bool_lit));
 
+named!(ident_char<char>, verify!(anychar, |ch: char| ch.is_alphanumeric() || ch == '_'));
+
 named!(upper_ident<String>, do_parse!(
     not!(reserved) >>
-    
+    first: peek!(anychar) >>
+    i: cond_reduce!(first.is_uppercase(), map!(many1!(ident_char), String::from_iter)) >>
+    (i)
 ));
 
-named!(ident<String>, do_parse!(
-	not!(reserved) >>
-    not!(int) >>
-	i: map!(map_res!(alphanumeric, str::from_utf8), String::from) >>
-	(i)
+named!(lower_ident<String>, do_parse!(
+    not!(reserved) >>
+    first: peek!(anychar) >>
+    i: cond_reduce!(first.is_lowercase(), map!(many1!(ident_char), String::from_iter)) >>
+    (i)
 ));
+
+named!(ident<String>, alt_complete!(upper_ident | lower_ident));
 
 named!(paren<Node>, delimited!( tag!("("), map!(ws!(
   separated_list!(tag!(","), expr)), |mut es| match es.len() {
@@ -199,13 +216,13 @@ named!(tuple_pattern<Pattern>, map!(ws_nl!(delimited!(
 }));
 
 named!(constr_pattern<Pattern>, map!(
-    ws_nl!(tuple!(ident, many0!(pattern_atom))),
+    ws_nl!(tuple!(upper_ident, many0!(pattern_atom))),
     |(c, v)| Pattern::Constructor(c, v)
 ));
 
 named!(pattern_atom<Pattern>, alt_complete!(
     map!(tag!("_"), |_| Pattern::Wild) | map!(literal, Pattern::Lit) |
-    map!(ident, Pattern::Ident) | tuple_pattern));
+    map!(lower_ident, Pattern::Ident) | tuple_pattern));
 named!(pattern<Pattern>, alt_complete!(constr_pattern | pattern_atom));
 
 named!(let_binding<(Pattern, Node)>, ws_nl!(do_parse!(
@@ -269,18 +286,18 @@ named!(func_type<Type>, map!(
     |(param, _, ret)| Type::Func(Box::new(param), Box::new(ret))
 ));
 
-named!(type_atom<Type>, alt_complete!(builtin_type | tuple_type));
+named!(type_atom<Type>, alt_complete!(builtin_type | map!(lower_ident, Type::Param) | tuple_type));
 named!(type_expr<Type>, alt_complete!(func_type | type_atom));
 
 named!(decl<(String, Type)>, ws_nl!(do_parse!(
-	i: ident >>
+	i: lower_ident >>
 	tag!(":") >>
 	t: type_expr >>
 	(i, t)
 )));
 
 named!(defn<Defn>, ws_nl!(do_parse!(
-	i: ident >>
+	i: lower_ident >>
 	a: ws_nl!(many0!(pattern_atom)) >>
 	tag!("=") >>
 	e: expr >>
@@ -289,8 +306,16 @@ named!(defn<Defn>, ws_nl!(do_parse!(
 
 named!(data_decl<DataDecl>, ws_nl!(do_parse!(
     tag!("data") >>
-    name: ident >>
-    params: ws_nl!(many0!(ident))
+    name: upper_ident >>
+    params: ws_nl!(many0!(lower_ident)) >>
+    tag!("=") >>
+    vars: ws!(separated_nonempty_list_complete!(tag!("|"),
+              ws_nl!(tuple!(upper_ident, many0!(type_atom))))) >>
+    (DataDecl{name: name, params: params, variants: vars})
+)));
+
+named!(top_level<Vec<Decl>>, separated_nonempty_list_complete!(line_ending, alt_complete!(
+    map!(data_decl, Decl::Data) | map!(decl, |(i,t)| Decl::Type(i, t)) | map!(defn, Decl::Defn)
 )));
 
 pub fn test_lambda() {
@@ -300,13 +325,19 @@ pub fn test_lambda() {
 }
 
 pub fn test_exprs() {
-    eprintln!("{:?}", expr(b"True").unwrap());
-    eprintln!("{:?}", expr(b"False").unwrap());
-    eprintln!("{:?}", expr(b"iszero e").unwrap());
-    eprintln!("{:?}", expr(b"succ e").unwrap());
-    eprintln!("{:?}", expr(b"pred e").unwrap());
-    eprintln!("{:?}", expr(b"if e then e else e").unwrap());
-    eprintln!("{:?}", expr(b"0").unwrap());
+    assert_eq!(expr(b"True"), IResult::Done(&[] as &[u8], Node::Lit(Literal::True)));
+    assert_eq!(expr(b"False"), IResult::Done(&[] as &[u8], Node::Lit(Literal::False)));
+    assert_eq!(expr(b"iszero e"), IResult::Done(&[] as &[u8], Node::FunCall(
+        Box::new(Node::Ident("iszero".to_owned())), Box::new(Node::Ident("e".to_owned())))));
+    assert_eq!(expr(b"succ e"), IResult::Done(&[] as &[u8], Node::FunCall(
+        Box::new(Node::Ident("succ".to_owned())), Box::new(Node::Ident("e".to_owned())))));
+    assert_eq!(expr(b"pred e"), IResult::Done(&[] as &[u8], Node::FunCall(
+        Box::new(Node::Ident("pred".to_owned())), Box::new(Node::Ident("e".to_owned())))));
+    assert_eq!(expr(b"if e then e else e"), IResult::Done(&[] as &[u8], Node::If(
+        Box::new(Node::Ident("e".to_owned())),
+        Box::new(Node::Ident("e".to_owned())),
+        Box::new(Node::Ident("e".to_owned())))));
+    assert_eq!(expr(b"0"), IResult::Done(&[] as &[u8], Node::Lit(Literal::Int(0))));
     eprintln!("");
     eprintln!("{:?}", type_expr(b"Int").unwrap());
     eprintln!("{:?}", type_expr(b"Bool").unwrap());
@@ -318,6 +349,42 @@ pub fn test_exprs() {
     eprintln!("{:?}", decl(b"map : (Int -> Int) -> Int -> Int").unwrap());
     eprintln!("{:?}", defn(b"map f = f").unwrap());
     eprintln!("");
+    let expected = IResult::Done(
+        &[] as &[u8],
+        DataDecl {
+            name: "MyUnit".to_owned(),
+            params: Vec::new(),
+            variants: vec![("MyUnit".to_owned(), Vec::new())],
+        },
+    );
+    assert_eq!(data_decl(b"data MyUnit = MyUnit"),expected);
+    let expected = IResult::Done(
+        &[] as &[u8],
+        DataDecl {
+            name: "MyInt".to_owned(),
+            params: Vec::new(),
+            variants: vec![("MyInt".to_owned(), vec![Type::Int])],
+        },
+    );
+    assert_eq!(data_decl(b"data MyInt = MyInt Int"), expected);
+    let expected = IResult::Done(
+        &[] as &[u8],
+        DataDecl {
+            name: "Wrapper".to_owned(),
+            params: vec!["a".to_owned()],
+            variants: vec![("Wrapper".to_owned(), vec![Type::Param("a".to_owned())])],
+        },
+    );
+    assert_eq!(data_decl(b"data Wrapper a = Wrapper a"), expected);
+    let expected = IResult::Done(
+        &[] as &[u8],
+        DataDecl {
+            name: "Union".to_owned(),
+            params: Vec::new(),
+            variants: vec![("Left".to_owned(), Vec::new()), ("Right".to_owned(), Vec::new())],
+        },
+    );
+    assert_eq!(data_decl(b"data Union = Left | Right"), expected);
 }
 // pub fn parse(src: &str) -> IResult<&[u8], Node> {
 // funcall(src.as_bytes())

@@ -29,7 +29,8 @@ fn main() {
     parser::test_lambda();
     parser::test_exprs();
     let stdin = stdin();
-    stdin.lock()
+    stdin
+        .lock()
         .lines()
         .map(|l| {
             l.map_err(|_| "Read Error.")

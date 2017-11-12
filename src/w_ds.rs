@@ -68,9 +68,11 @@ impl TypedNode {
                 if c.len() == 0 {
                     Type::Func(Box::new(p.clone()), Box::new(b.get_type()))
                 } else {
-                    Type::Closure(Box::new(p.clone()),
-                                  Box::new(b.get_type()),
-                                  c.iter().map(|&(_, ref t)| t.clone()).collect())
+                    Type::Closure(
+                        Box::new(p.clone()),
+                        Box::new(b.get_type()),
+                        c.iter().map(|&(_, ref t)| t.clone()).collect(),
+                    )
                 }
             }
             TypedNode::App(ref f, _) => f.get_ret_type().unwrap_or(Type::Free(TId::new())),
@@ -107,10 +109,12 @@ impl Types for TypedNode {
             TypedNode::Lit(l) => TypedNode::Lit(l),
             TypedNode::Var(i, t) => TypedNode::Var(i, t.apply(info)),
             TypedNode::Abs(a, b, p, c) => {
-                TypedNode::Abs(a,
-                               Box::new(b.apply(info)),
-                               p.apply(info),
-                               c.into_iter().map(|(i, t)| (i, t.apply(info))).collect())
+                TypedNode::Abs(
+                    a,
+                    Box::new(b.apply(info)),
+                    p.apply(info),
+                    c.into_iter().map(|(i, t)| (i, t.apply(info))).collect(),
+                )
             }
             TypedNode::App(f, p) => {
                 TypedNode::App(Box::new(f.apply(info)), Box::new(p.apply(info)))
@@ -119,9 +123,11 @@ impl Types for TypedNode {
                 TypedNode::Let(i, Box::new(t.apply(info)), Box::new(b.apply(info)))
             }
             TypedNode::Match(a, arms, t) => {
-                TypedNode::Match(Box::new(a.apply(info)),
-                                 arms.into_iter().map(|(p, n)| (p, n.apply(info))).collect(),
-                                 t.apply(info))
+                TypedNode::Match(
+                    Box::new(a.apply(info)),
+                    arms.into_iter().map(|(p, n)| (p, n.apply(info))).collect(),
+                    t.apply(info),
+                )
             }
         }
     }
@@ -173,23 +179,25 @@ impl<T: Types> Types for Scheme<T> {
             Scheme::Type(t) => Scheme::Type(t.apply(s)),
             Scheme::Forall(t, v) => {
                 let mut s = s.clone();
-                v.iter()
-                    .map(|&(id, _)| {
-                        s.remove(id);
-                    })
-                    .last();
-                Scheme::Forall(t.apply(&s),
-                               v.into_iter().map(|(id, c)| (id, c.apply(&s))).collect())
+                v.iter().map(|&(id, _)| { s.remove(id); }).last();
+                Scheme::Forall(
+                    t.apply(&s),
+                    v.into_iter().map(|(id, c)| (id, c.apply(&s))).collect(),
+                )
             }
         }
     }
 }
 
 impl<T> Types for Vec<T>
-    where T: Types
+where
+    T: Types,
 {
     fn ftv(&self) -> HashSet<TId> {
-        self.iter().map(Types::ftv).fold(HashSet::new(), |a, b| &a | &b)
+        self.iter().map(Types::ftv).fold(
+            HashSet::new(),
+            |a, b| &a | &b,
+        )
     }
     fn apply(self, s: &TypeInfo) -> Vec<T> {
         self.into_iter().map(|t| t.apply(s)).collect()
@@ -213,17 +221,21 @@ impl Types for Class {
 }
 
 impl<T: Eq + Hash> Types for HashSet<T>
-    where T: Types
+where
+    T: Types,
 {
     fn ftv(&self) -> HashSet<TId> {
-        self.iter().map(Types::ftv).fold(HashSet::new(), |a, b| &a | &b)
+        self.iter().map(Types::ftv).fold(
+            HashSet::new(),
+            |a, b| &a | &b,
+        )
     }
     fn apply(self, s: &TypeInfo) -> HashSet<T> {
         self.into_iter().map(|t| t.apply(s)).collect()
     }
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct TypeInfo {
     subst: HashMap<TId, Type>,
     constr: HashMap<TId, HashSet<Class>>,
@@ -250,14 +262,19 @@ impl TypeEnv {
         match vars.len() {
             0 => Scheme::Type(t),
             n => {
-                Scheme::Forall(t,
-                               vars.into_iter()
-                                   .map(|id| {
-                        let cls =
-                            info.constr.get(&id).into_iter().flat_map(|cls| cls.clone()).collect();
-                        (id, cls)
-                    })
-                                   .collect())
+                Scheme::Forall(
+                    t,
+                    vars.into_iter()
+                        .map(|id| {
+                            let cls = info.constr
+                                .get(&id)
+                                .into_iter()
+                                .flat_map(|cls| cls.clone())
+                                .collect();
+                            (id, cls)
+                        })
+                        .collect(),
+                )
             }
         }
     }
@@ -269,7 +286,10 @@ impl TypeEnv {
 
 impl Types for TypeEnv {
     fn ftv(&self) -> HashSet<TId> {
-        self.0.values().map(Types::ftv).fold(HashSet::new(), |a, b| &a | &b)
+        self.0.values().map(Types::ftv).fold(
+            HashSet::new(),
+            |a, b| &a | &b,
+        )
     }
     fn apply(self, s: &TypeInfo) -> TypeEnv {
         TypeEnv(self.0.into_iter().map(|(i, t)| (i, t.apply(s))).collect())
@@ -287,7 +307,10 @@ impl TypeInfo {
     }
 
     fn compose(self, other: TypeInfo) -> TypeInfo {
-        let TypeInfo { subst: s, constr: c } = other;
+        let TypeInfo {
+            subst: s,
+            constr: c,
+        } = other;
         let subst = s.into_iter()
             .map(|(k, v)| (k, v.apply(&self)))
             .chain(self.subst.clone().into_iter())
@@ -309,15 +332,19 @@ impl TypeInfo {
 
     fn apply_constraints(self) -> Result<TypeInfo, TypeError> {
         let TypeInfo { constr, subst } = self.clone();
-        constr.into_iter().fold(Ok(self), |info, (id, cls)| match subst.get(&id) {
-            Some(t) => {
-                cls.clone().into_iter().fold(info, |info, cl| {
-                    info.and_then(|info| {
-                        t.clone().unify_class(cl.apply(&info)).map(|i| i.compose(info))
+        constr.into_iter().fold(Ok(self), |info, (id, cls)| {
+            match subst.get(&id) {
+                Some(t) => {
+                    cls.clone().into_iter().fold(info, |info, cl| {
+                        info.and_then(|info| {
+                            t.clone().unify_class(cl.apply(&info)).map(
+                                |i| i.compose(info),
+                            )
+                        })
                     })
-                })
+                }
+                None => info,
             }
-            None => info,
         })
     }
 
@@ -327,7 +354,10 @@ impl TypeInfo {
     }
 
     fn test_constraints(&self) -> Result<(), TypeError> {
-        let &TypeInfo { ref subst, ref constr } = self;
+        let &TypeInfo {
+            ref subst,
+            ref constr,
+        } = self;
         for (id, ty) in subst.iter() {
             match constr.get(id) {
                 Some(cs) => {
@@ -410,20 +440,28 @@ impl Type {
             }
             (Type::Closure(p1, r1, h1), Type::Closure(p2, r2, h2)) => {
                 if h1.len() != h2.len() {
-                    return Err(TypeError::NoUnify(Type::Closure(p1, r1, h1),
-                                                  Type::Closure(p2, r2, h2)));
+                    return Err(TypeError::NoUnify(
+                        Type::Closure(p1, r1, h1),
+                        Type::Closure(p2, r2, h2),
+                    ));
                 }
                 let s1 = p1.unify(*p2)?;
                 let s2 = Type::unify(r1.apply(&s1), r2.apply(&s1))?;
 
-                h1.into_iter().zip(h2.into_iter()).fold(Ok(s1.compose(s2)), |s, (t1, t2)| {
-                    s.and_then(|s| Ok(Type::unify(t1.apply(&s), t2.apply(&s))?.compose(s)))
-                })
+                h1.into_iter().zip(h2.into_iter()).fold(
+                    Ok(s1.compose(s2)),
+                    |s, (t1, t2)| {
+                        s.and_then(|s| Ok(Type::unify(t1.apply(&s), t2.apply(&s))?.compose(s)))
+                    },
+                )
             }
             (Type::Tuple(ts1), Type::Tuple(ts2)) => {
-                ts1.into_iter().zip(ts2).fold(Ok(TypeInfo::new()), |i, (t1, t2)| {
-                    i.and_then(|i| Ok(Type::unify(t1.apply(&i), t2.apply(&i))?.compose(i)))
-                })
+                ts1.into_iter().zip(ts2).fold(
+                    Ok(TypeInfo::new()),
+                    |i, (t1, t2)| {
+                        i.and_then(|i| Ok(Type::unify(t1.apply(&i), t2.apply(&i))?.compose(i)))
+                    },
+                )
             }
             (Type::Free(id), t) |
             (t, Type::Free(id)) => t.var_bind(id),
@@ -460,26 +498,34 @@ impl Type {
     fn unify_pat(self, p: Pat, next: &mut TId) -> Result<(TypeInfo, TypeEnv), TypeError> {
         match (self, p) {
             (t, Pat::Prim(i)) => {
-                Ok((TypeInfo::new(),
-                    TypeEnv(i.map(|i| (i, Scheme::Type(t))).into_iter().collect())))
+                Ok((
+                    TypeInfo::new(),
+                    TypeEnv(
+                        i.map(|i| (i, Scheme::Type(t))).into_iter().collect(),
+                    ),
+                ))
             }
             // (Type::Int, Pat::Lit(_)) => Ok((TypeInfo::new() TypeEnv::new())),
-            (t, Pat::Lit(_)) => t.clone().unify(Type::Int).map(|info| (info, TypeEnv::new())),
+            (t, Pat::Lit(_)) => {
+                t.clone().unify(Type::Int).map(
+                    |info| (info, TypeEnv::new()),
+                )
+            }
             (t, Pat::Cons(c, args)) => {
                 if c.as_str() == "True" || c.as_str() == "False" {
                     t.unify(Type::Bool).map(|info| (info, TypeEnv::new()))
                 } else if c.as_str() == "()" {
                     t.unify(Type::Unit).map(|info| (info, TypeEnv::new()))
                 } else if c.chars().all(|ch| ch == ',') {
-                    let test = Type::Tuple(c.chars()
-                        .map(|_| next.next_t())
-                        .collect());
+                    let test = Type::Tuple(c.chars().map(|_| next.next_t()).collect());
                     let info = t.clone().unify(test)?;
                     if let Type::Tuple(ts) = t.apply(&info) {
-                        let env = TypeEnv(args.into_iter()
-                            .zip(ts.iter())
-                            .flat_map(|(p, t)| p.map(|p| (p, Scheme::Type(t.clone()))))
-                            .collect());
+                        let env = TypeEnv(
+                            args.into_iter()
+                                .zip(ts.iter())
+                                .flat_map(|(p, t)| p.map(|p| (p, Scheme::Type(t.clone()))))
+                                .collect(),
+                        );
                         Ok((info, env))
                     } else {
                         unreachable!()
@@ -580,10 +626,11 @@ fn infer_pat(p: &Pat, next: &mut TId) -> Result<Type, TypeError> {
     }
 }
 
-pub fn infer(n: &NodeDS,
-             env: &mut TypeEnv,
-             next: &mut TId)
-             -> Result<(TypeInfo, TypedNode), TypeError> {
+pub fn infer(
+    n: &NodeDS,
+    env: &mut TypeEnv,
+    next: &mut TId,
+) -> Result<(TypeInfo, TypedNode), TypeError> {
     match n {
         &NodeDS::Var(ref i) => {
             env.0
@@ -630,7 +677,10 @@ pub fn infer(n: &NodeDS,
                 let (idents, schemes): (Vec<_>, Vec<_>) = enumed.into_iter().unzip();
                 let (infos, ts): (Vec<_>, Vec<_>) = schemes.into_iter().unzip();
                 let info = infos.into_iter().fold(s, |i1, i2| i1.compose(i2));
-                let ts = idents.into_iter().zip(ts.into_iter().map(|t| t.apply(&info))).collect();
+                let ts = idents
+                    .into_iter()
+                    .zip(ts.into_iter().map(|t| t.apply(&info)))
+                    .collect();
                 // let t = Type::Closure(Box::new(new_id.apply(&info)), Box::new(t), ts);
                 let tagged = TypedNode::Abs(i.clone(), Box::new(body), new_id, ts).apply(&info);
 
@@ -640,20 +690,21 @@ pub fn infer(n: &NodeDS,
         &NodeDS::App(ref f, ref a) => {
             let err = |e| TypeError::Wrapped(NodeDS::App(f.clone(), a.clone()), Box::new(e));
             (|f, a| {
-                    let t = next.next_t();
+                let t = next.next_t();
 
-                    let (s1, tf) = infer(f, env, next)?;
-                    let (s2, ta) = infer(a, &mut env.clone().apply(&s1), next)?;
+                let (s1, tf) = infer(f, env, next)?;
+                let (s2, ta) = infer(a, &mut env.clone().apply(&s1), next)?;
 
-                    let sc = tf.get_type().unify_class(Class::Func(ta.get_type(), t.clone()))?;
-                    let s = s1.compose(s2).compose(sc).apply_constraints()?;
+                let sc = tf.get_type().unify_class(
+                    Class::Func(ta.get_type(), t.clone()),
+                )?;
+                let s = s1.compose(s2).compose(sc).apply_constraints()?;
 
-                    let tagged = TypedNode::App(Box::new(tf), Box::new(ta));
+                let tagged = TypedNode::App(Box::new(tf), Box::new(ta));
 
-                    let t = tagged.apply(&s);
-                    Ok((s, t))
-                })(f, a)
-                .map_err(err)
+                let t = tagged.apply(&s);
+                Ok((s, t))
+            })(f, a).map_err(err)
         }
         &NodeDS::Let(ref i, ref b, ref e) => {
             let mut env = env.clone();
@@ -716,14 +767,16 @@ pub fn infer(n: &NodeDS,
             // })
             //
 
-            let (info, t_arm) = arm_ts.iter()
-                .fold(Ok((info, next.next_t())), |r, &(ref i, ref n)| {
-                    r.and_then(|(info, t)| {
-                        let i = info.compose(i.clone()).compose(t.clone().unify(n.get_type())?);
-                        let t = t.apply(&i);
-                        Ok((i, t))
-                    })
-                })?;
+            let (info, t_arm) = arm_ts.iter().fold(Ok((info, next.next_t())), |r,
+             &(ref i, ref n)| {
+                r.and_then(|(info, t)| {
+                    let i = info.compose(i.clone()).compose(
+                        t.clone().unify(n.get_type())?,
+                    );
+                    let t = t.apply(&i);
+                    Ok((i, t))
+                })
+            })?;
             let arms = arms.clone()
                 .into_iter()
                 .map(|(p, _)| p)
@@ -737,13 +790,20 @@ pub fn infer(n: &NodeDS,
 
 fn build_tup_ty(i: u64) -> (Ident, Scheme<Type>) {
     let id = Arg::Ident(iter::repeat(',').take(i as usize - 1).collect());
-    let t = (0..i).rev().fold(Type::Tuple((0..i).map(|i| Type::Free(TId(i))).collect()),
-                              |t, j| {
-                                  Type::Closure(Box::new(Type::Free(TId(j))),
-                                                Box::new(t),
-                                                (j..i).map(|i| Type::Free(TId(i))).collect())
-                              });
-    (id, Scheme::Forall(t, (0..i).map(|i| (TId(i), HashSet::new())).collect()))
+    let t = (0..i).rev().fold(
+        Type::Tuple((0..i).map(|i| Type::Free(TId(i))).collect()),
+        |t, j| {
+            Type::Closure(
+                Box::new(Type::Free(TId(j))),
+                Box::new(t),
+                (j..i).map(|i| Type::Free(TId(i))).collect(),
+            )
+        },
+    );
+    (
+        id,
+        Scheme::Forall(t, (0..i).map(|i| (TId(i), HashSet::new())).collect()),
+    )
 }
 
 pub fn run_infer(n: &NodeDS) -> Result<TypedNode, TypeError> {
@@ -755,24 +815,41 @@ pub fn run_infer(n: &NodeDS) -> Result<TypedNode, TypeError> {
     let eq_id = ids.next_id();
     let eq_ty = Type::Free(eq_id);
 
-    let env = vec![(Arg::Ident(String::from("+")),
-                    Scheme::Forall(Type::Func(Box::new(add_ty.clone()),
-                                              Box::new(Type::Closure(Box::new(add_ty.clone()),
-                                                                     Box::new(add_ty.clone()),
-                                                                     vec![add_ty.clone()]))),
-                                   vec![(add_id, iter::once(Class::Num).collect())])),
-                   (Arg::Ident(String::from("==")),
-                    Scheme::Forall(Type::Func(Box::new(eq_ty.clone()),
-                                              Box::new(Type::Closure(Box::new(eq_ty.clone()),
-                                                                     Box::new(Type::Bool),
-                                                                     vec![eq_ty.clone()]))),
-                                   vec![(eq_id, iter::once(Class::Eq).collect())])),
-                   (Arg::Ident(String::from("()")), Scheme::Type(Type::Unit)),
-                   (Arg::Ident(String::from("True")), Scheme::Type(Type::Bool)),
-                   (Arg::Ident(String::from("False")), Scheme::Type(Type::Bool)),
-                   build_tup_ty(2),
-                   build_tup_ty(3)]
-        .into_iter()
+    let env = vec![
+        (
+            Arg::Ident(String::from("+")),
+            Scheme::Forall(
+                Type::Func(
+                    Box::new(add_ty.clone()),
+                    Box::new(Type::Closure(
+                        Box::new(add_ty.clone()),
+                        Box::new(add_ty.clone()),
+                        vec![add_ty.clone()],
+                    )),
+                ),
+                vec![(add_id, iter::once(Class::Num).collect())],
+            )
+        ),
+        (
+            Arg::Ident(String::from("==")),
+            Scheme::Forall(
+                Type::Func(
+                    Box::new(eq_ty.clone()),
+                    Box::new(Type::Closure(
+                        Box::new(eq_ty.clone()),
+                        Box::new(Type::Bool),
+                        vec![eq_ty.clone()],
+                    )),
+                ),
+                vec![(eq_id, iter::once(Class::Eq).collect())],
+            )
+        ),
+        (Arg::Ident(String::from("()")), Scheme::Type(Type::Unit)),
+        (Arg::Ident(String::from("True")), Scheme::Type(Type::Bool)),
+        (Arg::Ident(String::from("False")), Scheme::Type(Type::Bool)),
+        build_tup_ty(2),
+        build_tup_ty(3),
+    ].into_iter()
         .collect();
 
     infer(n, &mut TypeEnv(env), &mut ids).and_then(|(info, t)| {

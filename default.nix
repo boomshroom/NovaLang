@@ -7,5 +7,5 @@ pkgs.rustPlatform.buildRustPackage rec {
 
 	cargoSha256 = "1j5vf6iy0zjr3asj9ia1bf2rqdrzz9dzf7nv1jgg5ccxjc236mfq";
 
-	buildInputs = [ pkgs.llvm_5 ];
+	buildInputs = [ pkgs.llvm_5 pkgs.rustfmt ];
 }

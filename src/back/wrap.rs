@@ -58,9 +58,13 @@ impl Context {
 
     pub fn module<'a, T: Into<Vec<u8>>>(&'a self, name: T) -> Result<Module<'a>, NulError> {
         let name = CString::new(name)?;
-        Ok(Module(unsafe { LLVMModuleCreateWithNameInContext(name.as_ptr(), self.0) },
-                  self,
-                  name))
+        Ok(Module(
+            unsafe {
+                LLVMModuleCreateWithNameInContext(name.as_ptr(), self.0)
+            },
+            self,
+            name,
+        ))
     }
 
     pub fn int_type(&self, bits: u32) -> LLVMTypeRef {
@@ -81,15 +85,18 @@ impl<'a> Display for Module<'a> {
 }
 
 impl<'a> Module<'a> {
-    pub fn new_function<T: Into<Vec<u8>>>(&'a self,
-                                          name: T,
-                                          ty: LLVMTypeRef)
-                                          -> Result<Function<'a>, NulError> {
+    pub fn new_function<T: Into<Vec<u8>>>(
+        &'a self,
+        name: T,
+        ty: LLVMTypeRef,
+    ) -> Result<Function<'a>, NulError> {
         let name = CString::new(name)?;
         // let ty = unsafe {LLVMFunctionType(ret, args.as_mut_ptr(), args.len() as u32, 0) };
-        Ok(Function(unsafe { LLVMAddFunction(self.0, name.as_ptr(), ty) },
-                    self.1,
-                    name))
+        Ok(Function(
+            unsafe { LLVMAddFunction(self.0, name.as_ptr(), ty) },
+            self.1,
+            name,
+        ))
     }
 }
 
@@ -97,9 +104,13 @@ impl<'a> Function<'a> {
     pub fn append_bb<T: Into<Vec<u8>>>(&self, name: T) -> Result<BasicBlock<'a>, NulError> {
         let name = CString::new(name)?;
         // eprintln!("{:?}", name);
-        Ok(BasicBlock(unsafe { LLVMAppendBasicBlockInContext((self.1).0, self.0, name.as_ptr()) },
-                      PhantomData,
-                      name))
+        Ok(BasicBlock(
+            unsafe {
+                LLVMAppendBasicBlockInContext((self.1).0, self.0, name.as_ptr())
+            },
+            PhantomData,
+            name,
+        ))
     }
 }
 
@@ -108,13 +119,17 @@ impl<'a> Builder<'a> {
         unsafe { LLVMPositionBuilderAtEnd(self.0, bb.0) }
     }
 
-    pub fn build_insert_value<T: Into<Vec<u8>>>(&self,
-                                                agg: LLVMValueRef,
-                                                elem: LLVMValueRef,
-                                                idx: u32,
-                                                name: T)
-                                                -> Result<LLVMValueRef, NulError> {
-        assert!(!agg.is_null() && !elem.is_null(), "One of paramenters is null.");
+    pub fn build_insert_value<T: Into<Vec<u8>>>(
+        &self,
+        agg: LLVMValueRef,
+        elem: LLVMValueRef,
+        idx: u32,
+        name: T,
+    ) -> Result<LLVMValueRef, NulError> {
+        assert!(
+            !agg.is_null() && !elem.is_null(),
+            "One of paramenters is null."
+        );
         unsafe {
             use llvm_sys::LLVMTypeKind::*;
             let obj_ty = LLVMTypeOf(agg);
@@ -122,13 +137,19 @@ impl<'a> Builder<'a> {
             match LLVMGetTypeKind(obj_ty) {
                 LLVMStructTypeKind => {
                     assert!(idx < LLVMCountStructElementTypes(obj_ty));
-                    assert_eq!(LLVMGetTypeKind(LLVMStructGetTypeAtIndex(obj_ty, idx)), elem_kind
-                    	, "Invalid type insertion.");
+                    assert_eq!(
+                        LLVMGetTypeKind(LLVMStructGetTypeAtIndex(obj_ty, idx)),
+                        elem_kind,
+                        "Invalid type insertion."
+                    );
                 }
                 LLVMArrayTypeKind => {
                     assert!(idx < LLVMGetArrayLength(obj_ty));
-                    assert_eq!(LLVMGetTypeKind(LLVMGetElementType(obj_ty)), elem_kind
-                    	, "Invalid type insertion.");
+                    assert_eq!(
+                        LLVMGetTypeKind(LLVMGetElementType(obj_ty)),
+                        elem_kind,
+                        "Invalid type insertion."
+                    );
                 }
                 k => panic!("Only arrays and structs allowed. Got a {:?}", k),
             }
@@ -136,7 +157,9 @@ impl<'a> Builder<'a> {
         eprintln!("Type checks passed.");
 
         let name = CString::new(name)?;
-        Ok(unsafe { LLVMBuildInsertValue(self.0, agg, elem, idx, name.as_ptr()) })
+        Ok(unsafe {
+            LLVMBuildInsertValue(self.0, agg, elem, idx, name.as_ptr())
+        })
     }
 }
 
