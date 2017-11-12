@@ -9,7 +9,7 @@ extern crate llvm_sys;
 mod parser;
 // mod w;
 mod desugar;
-//mod w_ds;
+mod w_ds;
 //mod monomorph;
 
 //mod back;
@@ -19,6 +19,7 @@ mod desugar;
 // use lambda::Expr;
 use parser::Module;
 use desugar::ModDS;
+use w_ds::TypedMod;
 // use types::TypeEnv;
 // mod eval;
 // use eval::Value;
@@ -42,7 +43,7 @@ fn main() {
 
     let m = Module::new(file.as_slice()).expect("Parse error.");
 
-    println!("{:#?}", ModDS::new(m));
+    println!("{:#?}", TypedMod::new(ModDS::new(m)));
     /*
     let stdin = stdin();
     stdin

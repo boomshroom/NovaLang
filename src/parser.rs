@@ -61,11 +61,11 @@ pub struct Defn {
     pub val: Node,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct DataDecl {
-    name: String,
-    params: Vec<String>,
-    variants: Vec<(String, Vec<Type>)>,
+    pub name: String,
+    pub params: Vec<String>,
+    pub variants: Vec<(String, Vec<Type>)>,
 }
 
 #[derive(Debug, PartialEq)]

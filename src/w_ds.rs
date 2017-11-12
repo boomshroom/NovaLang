@@ -1,4 +1,5 @@
-use super::desugar::{NodeDS, Pat, Arg};
+use super::desugar::{NodeDS, Pat, Arg, ModDS};
+use super::parser::{self, DataDecl};
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::iter;
@@ -34,7 +35,11 @@ pub enum Type {
     Closure(Box<Type>, Box<Type>, Vec<Type>),
     Tuple(Vec<Type>),
     Free(TId),
+    Alias(String, Vec<Type>),
 }
+
+#[derive(Debug, Clone)]
+pub struct EnumDecl(Vec<(String, Vec<Type>)>);
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Scheme<T: Types> {
@@ -57,6 +62,150 @@ pub enum TypedNode {
     App(Box<TypedNode>, Box<TypedNode>),
     Let(String, Box<Scheme<TypedNode>>, Box<TypedNode>),
     Match(Box<TypedNode>, Vec<(Pat, TypedNode)>, Type),
+}
+
+#[derive(Debug)]
+pub struct TypedMod {
+    name: String,
+    exports: Option<Vec<String>>,
+    types: Vec<(String, Scheme<EnumDecl>)>,
+    defns: Vec<(String, Scheme<TypedNode>)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeEnv {
+    aliases: HashMap<String, Scheme<EnumDecl>>,
+    global: HashMap<Ident, Scheme<Type>>,
+    local: HashMap<Ident, Scheme<Type>>,
+}
+
+impl TypedMod {
+    pub fn new(m: ModDS) -> Result<TypedMod, TypeError> {
+        let ModDS {
+            name,
+            exports,
+            types,
+            defns,
+        } = m;
+        let types = types
+            .clone()
+            .into_iter()
+            .map(|DataDecl {
+                 name,
+                 params,
+                 variants,
+             }| {
+                (
+                    name,
+                    match params.len() {
+                        0 => Scheme::Type(EnumDecl(
+                            variants
+                                .into_iter()
+                                .map(|(i, ts)| {
+                                    (
+                                        i,
+                                        ts.into_iter()
+                                            .map(|t| Type::from(t, &HashMap::new()))
+                                            .collect(),
+                                    )
+                                })
+                                .collect(),
+                        )),
+                        n => {
+                            let params = params
+                                .into_iter()
+                                .enumerate()
+                                .map(|(i, a)| (a, TId(i as u64)))
+                                .collect::<HashMap<String, TId>>();
+                            Scheme::Forall(
+                                EnumDecl(
+                                    variants
+                                        .into_iter()
+                                        .map(|(i, ts)| {
+                                            (
+                                                i,
+                                                ts.into_iter()
+                                                    .map(|t| Type::from(t, &params))
+                                                    .collect(),
+                                            )
+                                        })
+                                        .collect(),
+                                ),
+                                params
+                                    .into_iter()
+                                    .map(|(_, v)| (v, HashSet::new()))
+                                    .collect(),
+                            )
+                        }
+                    },
+                )
+            })
+            .collect::<HashMap<String, Scheme<EnumDecl>>>();
+        let mut id = TId::new();
+        let globals = types.iter().flat_map(|(i, e)| match e {
+            &Scheme::Type(EnumDecl(ref e)) => {
+                e.iter().map(|&(ref v, ref args)| {
+                    (
+                        Arg::Ident(v.clone()),
+                        Scheme::Type(args.clone().into_iter().rev().fold(
+                            Type::Alias(i.clone(), Vec::new()),
+                            |r, a| Type::Func(Box::new(a), Box::new(r)),
+                        )),
+                    )
+                }).collect::<Vec<_>>()
+            }
+            &Scheme::Forall(EnumDecl(ref e), ref params) => {
+                e.iter().map(|&(ref v, ref args)| {
+                    (
+                        Arg::Ident(v.clone()),
+                        Scheme::Forall(
+                            args.clone().into_iter().rev().fold(
+                                Type::Alias(i.clone(), Vec::new()),
+                                |r, a| Type::Func(Box::new(a), Box::new(r)),
+                            ),
+                            params.clone(),
+                        ),
+                    )
+                }).collect::<Vec<_>>()
+            }
+        }).chain(defns.iter().map(|&(ref name, _)| (Arg::Ident(name.clone()), { let id = id.next_id(); Scheme::Forall(Type::Free(id), vec![(id, HashSet::new())])})))
+            .collect();;
+            
+        let mut env = TypeEnv {
+            aliases: types,
+            global: globals,
+            local: HashMap::new(),
+        };
+        let v = Vec::with_capacity(defns.len());
+        let (info, defns) = defns
+            .into_iter()
+            .map(|(i, n)| Ok((i, infer(&n, &mut env, &mut id)?)))
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .fold((TypeInfo::new(), v), |(i1, mut v), (name, (i2, n))| {
+                v.push((name, n));
+                (i1.compose(i2), v)
+            });
+        let defns = defns
+                .into_iter()
+                .map(|(i, n)| (i, env.generalize(n.apply(&info), &info)))
+                .collect();
+        Ok(TypedMod {
+            name,
+            exports,
+            types: env.aliases.into_iter().collect(),
+            defns: defns,
+        })
+    }
+}
+
+impl Types for EnumDecl {
+    fn ftv(&self) -> HashSet<TId> {
+        self.0.iter().flat_map(|&(_, ref ts)| ts.ftv()).collect()
+    }
+    fn apply(self, info: &TypeInfo) -> EnumDecl {
+        EnumDecl(self.0.into_iter().map(|(i, ts)| (i, ts.apply(info))).collect())
+    }
 }
 
 impl TypedNode {
@@ -147,6 +296,7 @@ impl Types for Type {
             &Type::Func(ref p, ref r) => &p.ftv() | &r.ftv(),
             &Type::Closure(ref p, ref r, ref hs) => &(&p.ftv() | &r.ftv()) | &hs.ftv(),
             &Type::Tuple(ref ts) => ts.iter().fold(HashSet::new(), |s, t| &s | &t.ftv()),
+            &Type::Alias(_, ref ts) => ts.iter().flat_map(Types::ftv).collect(),
             _ => HashSet::new(),
         }
     }
@@ -159,6 +309,7 @@ impl Types for Type {
                 Type::Closure(Box::new(p.apply(s)), Box::new(r.apply(s)), hs.apply(s))
             }
             Type::Tuple(ts) => Type::Tuple(ts.into_iter().map(|t| t.apply(s)).collect()),
+            Type::Alias(i, ts) => Type::Alias(i, ts.into_iter().map(|t| t.apply(s)).collect()),
             t => t,
         }
     }
@@ -250,12 +401,14 @@ pub struct TypeInfo {
 // .collect()
 // }
 //
-#[derive(Debug, Clone)]
-pub struct TypeEnv(HashMap<Ident, Scheme<Type>>);
 
 impl TypeEnv {
     fn new() -> TypeEnv {
-        TypeEnv(HashMap::new())
+        TypeEnv {
+            aliases: HashMap::new(),
+            global: HashMap::new(),
+            local: HashMap::new(),
+        }
     }
     fn generalize<T: Types>(&self, t: T, info: &TypeInfo) -> Scheme<T> {
         let vars = &t.ftv() - &self.ftv();
@@ -280,19 +433,38 @@ impl TypeEnv {
     }
 
     fn extend(&self, other: TypeEnv) -> TypeEnv {
-        TypeEnv(self.0.clone().into_iter().chain(other.0).collect())
+        TypeEnv {
+            global: self.global
+                .clone()
+                .into_iter()
+                .chain(other.global)
+                .collect(),
+            local: self.local.clone().into_iter().chain(other.local).collect(),
+            aliases: self.aliases.clone().into_iter().chain(other.aliases).collect(),
+        }
     }
 }
 
 impl Types for TypeEnv {
     fn ftv(&self) -> HashSet<TId> {
-        self.0.values().map(Types::ftv).fold(
-            HashSet::new(),
-            |a, b| &a | &b,
-        )
+        self.global
+            .values()
+            .chain(self.local.values())
+            .flat_map(Types::ftv)
+            .collect()
     }
     fn apply(self, s: &TypeInfo) -> TypeEnv {
-        TypeEnv(self.0.into_iter().map(|(i, t)| (i, t.apply(s))).collect())
+        TypeEnv {
+            global: self.global
+                .into_iter()
+                .map(|(i, t)| (i, t.apply(s)))
+                .collect(),
+            local: self.local
+                .into_iter()
+                .map(|(i, t)| (i, t.apply(s)))
+                .collect(),
+            aliases: self.aliases,
+        }
     }
 }
 
@@ -500,9 +672,11 @@ impl Type {
             (t, Pat::Prim(i)) => {
                 Ok((
                     TypeInfo::new(),
-                    TypeEnv(
-                        i.map(|i| (i, Scheme::Type(t))).into_iter().collect(),
-                    ),
+                    TypeEnv {
+                        global: HashMap::new(),
+                        local: i.map(|i| (i, Scheme::Type(t))).into_iter().collect(),
+                        aliases: HashMap::new()
+                    },
                 ))
             }
             // (Type::Int, Pat::Lit(_)) => Ok((TypeInfo::new() TypeEnv::new())),
@@ -520,12 +694,14 @@ impl Type {
                     let test = Type::Tuple(c.chars().map(|_| next.next_t()).collect());
                     let info = t.clone().unify(test)?;
                     if let Type::Tuple(ts) = t.apply(&info) {
-                        let env = TypeEnv(
-                            args.into_iter()
+                        let env = TypeEnv {
+                            global: HashMap::new(),
+                            local: args.into_iter()
                                 .zip(ts.iter())
                                 .flat_map(|(p, t)| p.map(|p| (p, Scheme::Type(t.clone()))))
                                 .collect(),
-                        );
+                            aliases: HashMap::new(),
+                        };
                         Ok((info, env))
                     } else {
                         unreachable!()
@@ -593,6 +769,20 @@ impl Type {
             _ => false,
         }
     }
+
+    fn from(t: parser::Type, ids: &HashMap<String, TId>) -> Type {
+        match t {
+            parser::Type::Unit => Type::Unit,
+            parser::Type::Int => Type::Int,
+            parser::Type::Bool => Type::Bool,
+            parser::Type::Func(a, r) => {
+                Type::Func(Box::new(Type::from(*a, ids)), Box::new(Type::from(*r, ids)))
+            }
+            parser::Type::Tuple(ts) => Type::Tuple(ts.into_iter().map(|t| Type::from(t, ids)).collect()),
+            parser::Type::Param(i) => Type::Free(*ids.get(&i).expect("Undeclared type id.")),
+            t => panic!("Unimplemented: {:?}", t),
+        }
+    }
 }
 
 fn infer_pat(p: &Pat, next: &mut TId) -> Result<Type, TypeError> {
@@ -633,8 +823,9 @@ pub fn infer(
 ) -> Result<(TypeInfo, TypedNode), TypeError> {
     match n {
         &NodeDS::Var(ref i) => {
-            env.0
+            env.local
                 .get(i)
+                .or_else(|| env.global.get(i))
                 .map(|s| s.instantiate(next))
                 .map(|(info, t)| (info, TypedNode::Var(i.clone(), t)))
                 .ok_or(TypeError::Unbound(i.clone()))
@@ -646,7 +837,7 @@ pub fn infer(
             let mut env = match i {
                 &Some(ref i) => {
                     let mut e = env.clone();
-                    e.0.insert(i.clone(), Scheme::Type(new_id.clone()));
+                    e.local.insert(i.clone(), Scheme::Type(new_id.clone()));
                     e
                 }
                 &None => env.clone(),
@@ -661,19 +852,20 @@ pub fn infer(
                 }
                 &None => {}
             };
-            if free.is_empty() {
+            let enumed = free.into_iter()
+                .filter_map(|i| {
+                    env.local
+                        .get(i)
+                        .map(|s1| Some((i.clone(), s1.instantiate(next))))
+                        .or_else(|| env.global.get(i).map(|_| None))
+                        .map(|e| e.ok_or(TypeError::Unbound(i.clone())))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if enumed.is_empty() {
                 // let t = Type::Func(Box::new()new_id.apply(&s), Box::new(t));
                 let nt = TypedNode::Abs(i.clone(), Box::new(body), new_id, Vec::new()).apply(&s);
                 Ok((s, nt))
             } else {
-                let enumed = free.into_iter()
-                    .map(|i| {
-                        env.0
-                            .get(i)
-                            .map(|s1| (i.clone(), s1.instantiate(next)))
-                            .ok_or(TypeError::Unbound(i.clone()))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
                 let (idents, schemes): (Vec<_>, Vec<_>) = enumed.into_iter().unzip();
                 let (infos, ts): (Vec<_>, Vec<_>) = schemes.into_iter().unzip();
                 let info = infos.into_iter().fold(s, |i1, i2| i1.compose(i2));
@@ -718,7 +910,7 @@ pub fn infer(
             let sb = s1;
             let t = env.clone().apply(&sb).generalize(tb, &sb);
 
-            env.0.insert(Arg::Ident(i.clone()), t.get_type());
+            env.local.insert(Arg::Ident(i.clone()), t.get_type());
 
             env = env.apply(&sb);
 
@@ -805,7 +997,7 @@ fn build_tup_ty(i: u64) -> (Ident, Scheme<Type>) {
         Scheme::Forall(t, (0..i).map(|i| (TId(i), HashSet::new())).collect()),
     )
 }
-
+/*
 pub fn run_infer(n: &NodeDS) -> Result<TypedNode, TypeError> {
     let mut ids = TId::new();
 
@@ -857,3 +1049,4 @@ pub fn run_infer(n: &NodeDS) -> Result<TypedNode, TypeError> {
         info.test_constraints().map(|_| t)
     })
 }
+*/

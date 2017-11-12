@@ -30,10 +30,10 @@ pub enum Arg {
 
 #[derive(Debug)]
 pub struct ModDS {
-    name: String,
-    exports: Option<Vec<String>>,
-    types: Vec<DataDecl>,
-    defns: Vec<(String, NodeDS)>,
+    pub name: String,
+    pub exports: Option<Vec<String>>,
+    pub types: Vec<DataDecl>,
+    pub defns: Vec<(String, NodeDS)>,
 }
 
 fn op_to_func(o: Op) -> Arg {
@@ -65,24 +65,36 @@ pub fn desugar(n: Node) -> NodeDS {
 
 impl ModDS {
     pub fn new(m: Module) -> ModDS {
-        let Module{name, exports, decls} = m;
+        let Module {
+            name,
+            exports,
+            decls,
+        } = m;
         let mut types = Vec::new();
         let mut defns = Vec::new();
         for d in decls {
             match d {
-                Decl::Defn(Defn{name, args, val}) => {
-                    let temp = Node::Let(vec![(Pattern::Constructor(String::from("a"), args), val)], Box::new(Node::Lit(Literal::Int(0))));
+                Decl::Defn(Defn { name, args, val }) => {
+                    let temp = Node::Let(
+                        vec![(Pattern::Constructor(String::from("a"), args), val)],
+                        Box::new(Node::Lit(Literal::Int(0))),
+                    );
                     if let NodeDS::Let(_, body, _) = desugar(temp) {
                         defns.push((name, *body));
                     } else {
                         unreachable!();
                     }
                 }
-                Decl::Type(_, _) => {}, // TODO
+                Decl::Type(_, _) => {} // TODO
                 Decl::Data(d) => types.push(d),
             };
         }
-        ModDS{name, exports, types, defns}
+        ModDS {
+            name,
+            exports,
+            types,
+            defns,
+        }
     }
 }
 
