@@ -5,6 +5,8 @@ use std::fmt::{self, Display, Formatter};
 use std::marker::PhantomData;
 use std::ops::Deref;
 
+use super::super::w_ds::Type;
+
 macro_rules! dispose {
 	($t:ident, $f:ident) => (impl Drop for $t {
 		fn drop(&mut self) {
@@ -73,6 +75,44 @@ impl Context {
 
     pub fn builder<'a>(&'a self) -> Builder<'a> {
         Builder(unsafe { LLVMCreateBuilderInContext(self.0) }, PhantomData)
+    }
+
+    pub fn ll_type(&self, t: &Type) -> LLVMTypeRef {
+        match *t {
+            Type::Int => self.int_type(64),
+            Type::Int8 => self.int_type(8),
+            Type::Bool => self.int_type(1),
+            Type::Unit => unsafe { LLVMStructType(0 as *mut LLVMTypeRef, 0, 0) },
+            Type::Tuple(ref ts) => {
+                let mut ts: Vec<_> = ts.iter().map(|t| self.ll_type(t)).collect();
+                unsafe { LLVMStructType(ts.as_mut_ptr(), ts.len() as u32, 0) }
+            }
+            Type::Func(ref a, ref r) => unsafe {
+                LLVMPointerType(
+                    LLVMFunctionType(self.ll_type(r), &mut self.ll_type(a) as *mut _, 1, 0),
+                    0,
+                )
+            },
+            Type::Closure(ref a, ref r, ref c) => {
+                let mut ts: Vec<_> = c.iter().map(|t| self.ll_type(t)).collect();
+                let cap = unsafe { LLVMStructType(ts.as_mut_ptr(), ts.len() as u32, 0) };
+                let mut args = [cap, self.ll_type(a)];
+                let f_ty = unsafe {
+                    LLVMPointerType(
+                        LLVMFunctionType(self.ll_type(r), args.as_mut_ptr(), args.len() as u32, 0),
+                        0,
+                    )
+                };
+                let mut closure = [f_ty, cap];
+                unsafe { LLVMStructType(closure.as_mut_ptr(), closure.len() as u32, 0) }
+            }
+            Type::Free(_) => {
+                eprintln!("Free type made to compilation!");
+                self.int_type(64) // Assume Int
+            }
+            Type::Ptr(ref t) => unsafe { LLVMPointerType(self.ll_type(&**t), 0) },
+            Type::Alias(_, _) => panic!("Type aliases not yes implemented."),
+        }
     }
 }
 

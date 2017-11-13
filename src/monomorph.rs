@@ -15,10 +15,10 @@ pub enum Node {
 
 #[derive(Debug)]
 pub struct Module {
-    name: String,
-    exports: Option<Vec<String>>,
-    types: Vec<(String, Scheme<EnumDecl>)>,
-    defns: HashMap<(String, Type), Node>,
+    pub name: String,
+    pub exports: Option<Vec<String>>,
+    pub types: Vec<(String, Scheme<EnumDecl>)>,
+    pub defns: Vec<(String, Type, Node)>,
 }
 
 impl Module {
@@ -31,22 +31,22 @@ impl Module {
         } = m;
 
         let defns = defns.into_iter().collect::<HashMap<_, _>>();
-        let mut new_defns = HashMap::with_capacity(defns.len());
+        let mut new_defns = Vec::with_capacity(defns.len());
 
-        let mut queue = VecDeque::new();
-        queue.push_back((
+        let mut stack = Vec::new();
+        stack.push((
             String::from("main"),
             Type::Func(
                 Box::new(Type::Tuple(vec![
                     Type::Int,
-                    Type::Ptr(Box::new(Type::Ptr(Box::new(Type::Unit)))),
+                    Type::Ptr(Box::new(Type::Ptr(Box::new(Type::Int8)))),
                 ])),
                 Box::new(Type::Int),
             ),
         ));
 
-        while let Some(item) = queue.pop_front() {
-            if new_defns.contains_key(&item) {
+        while let Some(item) = stack.pop() {
+            if search(new_defns.as_slice(), &item) {
                 continue;
             }
             let (name, ty) = item;
@@ -60,8 +60,8 @@ impl Module {
                     monomorph(n.clone().apply(&info))
                 }
             };
-            queue.extend(node.free_vars());
-            new_defns.insert((name, ty), node);
+            stack.extend(node.free_vars());
+            new_defns.push((name, ty, node));
         }
 
         Module {
@@ -71,6 +71,16 @@ impl Module {
             defns: new_defns,
         }
     }
+}
+
+fn search(list: &[(String, Type, Node)], entry: &(String, Type)) -> bool {
+    let &(ref i1, ref t1) = entry;
+    for &(ref i2, ref t2, _) in list {
+        if i1 == i2 && t1 == t2 {
+            return true;
+        }
+    }
+    return false;
 }
 
 pub fn monomorph(n: TypedNode) -> Node {

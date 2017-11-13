@@ -1,10 +1,10 @@
 use super::wrap::{self, Context, Module, Builder, Function};
 use super::super::desugar::{Pat, Arg};
 use super::super::w_ds::Type;
-use super::super::monomorph::Node;
+use super::super::monomorph::{self, Node};
 use llvm_sys::prelude::*;
 use llvm_sys::core::*;
-use llvm_sys::LLVMIntPredicate;
+use llvm_sys::{LLVMIntPredicate, LLVMLinkage};
 use std::collections::HashMap;
 use std::ffi::{NulError, CString};
 use std::iter;
@@ -34,61 +34,112 @@ fn unit_struct(ctx: &Context) -> LLVMValueRef {
     unsafe { LLVMConstStructInContext(**ctx, null(), 0, 0) }
 }
 
-pub fn compile(n: Node) -> Result<String, NulError> {
+pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
+    let monomorph::Module {
+        name,
+        exports,
+        types,
+        defns,
+    } = m;
+
     let ctx = Context::new();
-    let modl = ctx.module("test")?;
+    let modl = ctx.module(name)?;
     let mut c = Counter::new();
-    let f = modl.new_function("main", unsafe {
-        LLVMFunctionType(ctx.int_type(32), null(), 0, 0)
+
+    let vars = defns
+        .iter()
+        .map(|&(ref name, ref ty, _)| {
+            /*let ll_name = if name.as_str() == "main" && ty == Type::Func(
+                Box::new(Type::Tuple(vec![
+                    Type::Int,
+                    Type::Ptr(Box::new(Type::Ptr(Box::new(Type::Unit)))),
+                ])),
+                Box::new(Type::Int),
+            ) {
+            CString::new("main").unwrap()
+        } else {
+            c.next()
+        };*/
+
+            let g = unsafe { LLVMAddGlobal(*modl, ctx.ll_type(ty), c.next().as_ptr()) };
+
+            if let Some(ref exps) = exports {
+                if !exps.contains(name) {
+                    unsafe { LLVMSetLinkage(g, LLVMLinkage::LLVMInternalLinkage) };
+                } else {
+                    unsafe { LLVMSetLinkage(g, LLVMLinkage::LLVMExternalLinkage) };
+                }
+            };
+            Ok((Arg::Ident(name.clone()), ty.clone(), g))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let main = modl.new_function("main", unsafe {
+        LLVMFunctionType(
+            ctx.int_type(64),
+            [
+                ctx.int_type(64),
+                LLVMPointerType(LLVMPointerType(ctx.int_type(8), 0), 0),
+            ].as_mut_ptr(),
+            2,
+            0,
+        )
     })?;
 
     let mut comp = Compiler {
         ctx: &ctx,
         lmod: &modl,
         build: ctx.builder(),
-        vars: Vec::new(),
-        func: f,
+        vars: vars,
+        func: main,
         counter: &mut c,
     };
 
-
-    comp.vars.push((
-        Arg::Ident(String::from("True")),
-        Type::Bool,
-        unsafe {
-            LLVMConstStructInContext(
-                *ctx,
-                [unit_struct(&ctx), wrap::uint(1, ctx.int_type(1))].as_mut_ptr(),
-                2,
-                0,
-            )
-        },
-    ));
-    comp.vars.push((
-        Arg::Ident(String::from("False")),
-        Type::Bool,
-        unsafe {
-            LLVMConstStructInContext(
-                *ctx,
-                [unit_struct(&ctx), wrap::uint(0, ctx.int_type(1))].as_mut_ptr(),
-                2,
-                0,
-            )
-        },
-    ));
-
     comp.build.set_block(comp.func.append_bb("entry")?);
 
-    let r = comp.compile(n);
+    for (a, t, n) in defns.into_iter().rev() {
+        let v = comp.compile(n);
+        let p = comp.compile_var(Arg::Ident(a), t);
+        unsafe { LLVMBuildStore(*comp.build, v, p) };
+    }
+
+    let main_fn = comp.compile_var(
+        Arg::Ident(String::from("main")),
+        Type::Func(
+            Box::new(Type::Tuple(vec![
+                Type::Int,
+                Type::Ptr(Box::new(Type::Ptr(Box::new(Type::Int8)))),
+            ])),
+            Box::new(Type::Int),
+        ),
+    );
+
+    let argn = unsafe { LLVMGetParam(*comp.func, 0) };
+    let argv = unsafe { LLVMGetParam(*comp.func, 1) };
+
+    let args = unsafe {
+        LLVMGetUndef(LLVMStructType(
+            [
+                ctx.int_type(64),
+                LLVMPointerType(LLVMPointerType(ctx.int_type(8), 0), 0),
+            ].as_mut_ptr(),
+            2,
+            0,
+        ))
+    };
+    let mut args = comp.build
+        .build_insert_value(args, argn, 0, "argn")
+        .and_then(|args| comp.build.build_insert_value(args, argv, 1, "argv"))?;
 
     unsafe {
         LLVMBuildRet(
             *comp.build,
-            LLVMBuildTruncOrBitCast(
+            LLVMBuildCall(
                 *comp.build,
-                r,
-                ctx.int_type(32),
-                comp.counter.next().as_ptr(),
+                LLVMBuildLoad(*comp.build, main_fn, CString::new("fun")?.as_ptr()),
+                &mut args as *mut LLVMValueRef,
+                1,
+                CString::new("init")?.as_ptr(),
             ),
         )
     };
@@ -393,7 +444,6 @@ impl<'a> Compiler<'a> {
         let arg_ll = self.compile(arg);
 
         let end_block = self.func.append_bb(self.counter.next()).unwrap();
-        let catch = self.func.append_bb(self.counter.next()).unwrap();
 
         let (mut vals, mut blks): (Vec<LLVMValueRef>, Vec<LLVMBasicBlockRef>) = arms.into_iter()
             .map(|(p, b)| {
@@ -518,40 +568,10 @@ impl<'a> Compiler<'a> {
     }
 
     fn ll_type(&self, t: &Type) -> LLVMTypeRef {
-        match *t {
-            Type::Int => self.ctx.int_type(64),
-            Type::Bool => self.ctx.int_type(1),
-            Type::Unit => unsafe { LLVMStructType(null(), 0, 0) },
-            Type::Tuple(ref ts) => {
-                let mut ts: Vec<_> = ts.iter().map(|t| self.ll_type(t)).collect();
-                unsafe { LLVMStructType(ts.as_mut_ptr(), ts.len() as u32, 0) }
-            }
-            Type::Func(ref a, ref r) => unsafe {
-                LLVMPointerType(
-                    LLVMFunctionType(self.ll_type(r), &mut self.ll_type(a) as *mut _, 1, 0),
-                    0,
-                )
-            },
-            Type::Closure(ref a, ref r, ref c) => {
-                let mut ts: Vec<_> = c.iter().map(|t| self.ll_type(t)).collect();
-                let cap = unsafe { LLVMStructType(ts.as_mut_ptr(), ts.len() as u32, 0) };
-                let mut args = [cap, self.ll_type(a)];
-                let f_ty = unsafe {
-                    LLVMPointerType(
-                        LLVMFunctionType(self.ll_type(r), args.as_mut_ptr(), args.len() as u32, 0),
-                        0,
-                    )
-                };
-                let mut closure = [f_ty, cap];
-                unsafe { LLVMStructType(closure.as_mut_ptr(), closure.len() as u32, 0) }
-            }
-            Type::Free(_) => {
-                eprintln!("Free type made to compilation!");
-                self.ctx.int_type(64) // Assume Int
-            }
-        }
+        self.ctx.ll_type(t)
     }
 
+    /*
     fn zero_for_type(&self, t: &Type) -> LLVMValueRef {
         match *t {
             Type::Int => unsafe { LLVMConstInt(self.ctx.int_type(64), 0, 1) },
@@ -591,6 +611,9 @@ impl<'a> Compiler<'a> {
                 unsafe { LLVMConstStruct(closure.as_mut_ptr(), closure.len() as u32, 0) }
             }
             Type::Free(_) => unreachable!(),
+            Type::Ptr(ref t) => unsafe { LLVMConstNull(LLVMPointerType(self.zero_for_type(t))) },
+            Type::Alias(_) => panic!("Not yet implemented");
         }
     }
+    */
 }

@@ -30,6 +30,7 @@ type Ident = Arg;
 pub enum Type {
     Unit,
     Int,
+    Int8,
     Bool,
     Func(Box<Type>, Box<Type>),
     Closure(Box<Type>, Box<Type>, Vec<Type>),
@@ -780,10 +781,12 @@ impl Type {
     fn in_class(&self, c: &Class) -> bool {
         match (self, c) {
             (&Type::Free(_), _) => true,
-            (&Type::Int, &Class::Num) => true,
+            (&Type::Int, &Class::Num) |
+            (&Type::Int8, &Class::Num) => true,
             (&Type::Int, &Class::Eq) |
             (&Type::Bool, &Class::Eq) |
-            (&Type::Unit, &Class::Eq) => true,
+            (&Type::Unit, &Class::Eq) |
+            (&Type::Int8, &Class::Eq) => true,
             (&Type::Func(ref p1, ref r1), &Class::Func(ref p2, ref r2)) => {
                 if let Ok(i1) = p1.clone().unify(p2.clone()) {
                     r1.clone().apply(&i1).unify(r2.clone().apply(&i1)).is_ok()
@@ -806,6 +809,7 @@ impl Type {
         match t {
             parser::Type::Unit => Type::Unit,
             parser::Type::Int => Type::Int,
+            parser::Type::Int8 => Type::Int8,
             parser::Type::Bool => Type::Bool,
             parser::Type::Func(a, r) => {
                 Type::Func(Box::new(Type::from(*a, ids)), Box::new(Type::from(*r, ids)))

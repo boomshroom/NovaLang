@@ -37,6 +37,7 @@ pub enum Literal {
 pub enum Type {
     Unit,
     Int,
+    Int8,
     Bool,
     Func(Box<Type>, Box<Type>),
     Tuple(Vec<Type>),
@@ -157,6 +158,7 @@ named!(keyword<&str>, map_res!(alt_complete!(
     tag!("let") | tag!("in") | tag!("if") | tag!("then") | tag!("else") | tag!("case") | tag!("of")
 ), str::from_utf8));
 named!(builtin_type<Type>, switch!(alphanumeric,
+    b"Int8" => value!(Type::Int8) |
 	b"Int" => value!(Type::Int) |
 	b"Bool" => value!(Type::Bool) |
     b"Box" => map!(ws_nl!(type_atom), |t| Type::Box(Box::new(t))) |

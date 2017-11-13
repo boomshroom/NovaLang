@@ -1,4 +1,4 @@
 module Main (main)
 
-main : (Int, Ptr (Ptr ())) -> Int
+main : (Int, Ptr (Ptr Int8)) -> Int
 main (n, _) = n
