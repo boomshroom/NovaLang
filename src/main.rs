@@ -10,7 +10,7 @@ mod parser;
 // mod w;
 mod desugar;
 mod w_ds;
-//mod monomorph;
+mod monomorph;
 
 //mod back;
 // mod simple;
@@ -43,7 +43,10 @@ fn main() {
 
     let m = Module::new(file.as_slice()).expect("Parse error.");
 
-    println!("{:#?}", TypedMod::new(ModDS::new(m)));
+    println!(
+        "{:#?}",
+        monomorph::Module::new(TypedMod::new(ModDS::new(m)).expect("Type error."))
+    );
     /*
     let stdin = stdin();
     stdin
