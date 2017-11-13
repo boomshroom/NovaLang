@@ -36,14 +36,14 @@ fn unit_struct(ctx: &Context) -> LLVMValueRef {
 
 pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
     let monomorph::Module {
-        name,
+        name: m_name,
         exports,
         types,
         defns,
     } = m;
 
     let ctx = Context::new();
-    let modl = ctx.module(name)?;
+    let modl = ctx.module(m_name.as_str())?;
     let mut c = Counter::new();
 
     let vars = defns
@@ -60,8 +60,8 @@ pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
         } else {
             c.next()
         };*/
-
-            let g = unsafe { LLVMAddGlobal(*modl, ctx.ll_type(ty), c.next().as_ptr()) };
+            let ll_type = ctx.ll_type(ty);
+            let g = unsafe { LLVMAddGlobal(*modl, ll_type, CString::new(format!("{}.{}", m_name, name))?.as_ptr()) };
 
             if let Some(ref exps) = exports {
                 if !exps.contains(name) {
@@ -70,6 +70,7 @@ pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
                     unsafe { LLVMSetLinkage(g, LLVMLinkage::LLVMExternalLinkage) };
                 }
             };
+            unsafe { LLVMSetInitializer( g, LLVMGetUndef(ll_type) ) };
             Ok((Arg::Ident(name.clone()), ty.clone(), g))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -99,7 +100,7 @@ pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
 
     for (a, t, n) in defns.into_iter().rev() {
         let v = comp.compile(n);
-        let p = comp.compile_var(Arg::Ident(a), t);
+        let p = comp.lookup(Arg::Ident(a), t);
         unsafe { LLVMBuildStore(*comp.build, v, p) };
     }
 
@@ -136,7 +137,7 @@ pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
             *comp.build,
             LLVMBuildCall(
                 *comp.build,
-                LLVMBuildLoad(*comp.build, main_fn, CString::new("fun")?.as_ptr()),
+                main_fn,
                 &mut args as *mut LLVMValueRef,
                 1,
                 CString::new("init")?.as_ptr(),
@@ -213,9 +214,11 @@ impl<'a> Compiler<'a> {
 
     fn compile_app(&mut self, f: Node, a: Node) -> LLVMValueRef {
         let f_ty = f.get_type();
-        eprintln!("{:?}", f_ty);
-        let f = self.compile(f);
-        let mut a = self.compile(a);
+        let (f, a) = (self.compile(f), self.compile(a));
+        self.compile_app_raw(f_ty, f, a)
+    }
+
+    fn compile_app_raw(&mut self, f_ty: Type, f: LLVMValueRef, mut a: LLVMValueRef) -> LLVMValueRef {
         match f_ty {
             Type::Func(_, _) => {
                 let v = unsafe {
@@ -427,7 +430,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn compile_var(&mut self, i: Arg, t: Type) -> LLVMValueRef {
+    fn lookup(&mut self, i: Arg, t: Type) -> LLVMValueRef {
         // eprintln!("{:?}", i);
         for &(ref a, ref ty, v) in self.vars.iter().rev() {
             if a == &i && ty.clone().unify(t.clone()).is_ok() {
@@ -436,6 +439,15 @@ impl<'a> Compiler<'a> {
             }
         }
         panic!("Value undefined: {:?} :: {:?}", i, t)
+    }
+
+    fn compile_var(&mut self, i: Arg, t: Type) -> LLVMValueRef {
+        let v = self.lookup(i, t);
+        if unsafe { LLVMIsAGlobalValue(v) == null() } {
+            return v;
+        } else {
+            return unsafe { LLVMBuildLoad(*self.build, v, self.counter.next().as_ptr()) };
+        }
     }
 
     fn compile_match(&mut self, arg: Node, arms: Vec<(Pat, Node)>, res: Type) -> LLVMValueRef {
