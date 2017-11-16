@@ -64,6 +64,7 @@ pub enum TypedNode {
     App(Box<TypedNode>, Box<TypedNode>),
     Let(String, Box<Scheme<TypedNode>>, Box<TypedNode>),
     Match(Box<TypedNode>, Vec<(Pat, TypedNode)>, Type),
+    Constr(u64, Type),
 }
 
 #[derive(Debug)]
@@ -200,12 +201,20 @@ impl TypedMod {
             global: globals,
             local: HashMap::new(),
         };
+
+        env.global.insert(Arg::Ident(String::from("LLVM_add_int64")), Scheme::Type(Type::Func(Box::new(Type::Tuple(vec![Type::Int, Type::Int])), Box::new(Type::Int))));
+
         let v = Vec::with_capacity(defns.len());
         let (info, defns) = defns
             .into_iter()
             .map(|(i, n)| Ok((i, infer(&n, &mut env, &mut id)?)))
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
+            .chain(env.aliases.iter().flat_map(|&(ref t, ref e)| {
+                match e {
+                    &Scheme::Type(ref e) => e.iter().map(|&(ref i, ref ts)| )
+                }
+            }))
             .fold((TypeInfo::new(), v), |(i1, mut v), (name, (i2, n))| {
                 v.push((name, n));
                 (i1.compose(i2), v)
@@ -617,9 +626,29 @@ impl<T: Types + Clone> Scheme<T> {
 
 impl Scheme<TypedNode> {
     fn get_type(&self) -> Scheme<Type> {
+        self.map_r(TypedNode::get_type)
+    }
+}
+
+impl<T: Types> Scheme<T> {
+    fn map<V: Types, F(T)->V>(self, f: F) -> Scheme<V> {
         match self {
-            &Scheme::Type(ref n) => Scheme::Type(n.get_type()),
-            &Scheme::Forall(ref n, ref v) => Scheme::Forall(n.get_type(), v.clone()),
+            Scheme::Type(t) => Scheme(f(t)),
+            Scheme::Forall(t, c) => Scheme::Forall(f(t), c),
+        }
+    }
+
+    fn map_r<V: Types, F(&T)->V>(&self, f: F) -> Scheme<V> {
+        match *self {
+            Scheme::Type(ref t) => Scheme(f(t)),
+            Scheme::Forall(ref t, ref c) => Scheme::Forall(f(t), c.clone()),
+        }
+    }
+
+    fn flat_map_r<I: IntoIterator, F(&T)->I>(&self, f: F) -> Vec<Scheme<I::Item>> {
+        match *self {
+            Scheme::Type(ref t) => f(t).into_iter().map(Scheme::Type).collect(),
+            Scheme::Forall(ref t, ref c) => f(t).into_iter().map(|t| Scheme::Forall(t, c.clone())).collect(),
         }
     }
 }

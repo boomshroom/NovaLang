@@ -1,4 +1,7 @@
 module Main (main)
 
-main : (Int, Ptr (Ptr Int8)) -> Int
-main (n, _) = n
+data Tuple a b = Tuple a b
+
+add a b = LLVM_add_int64 (Tuple a b)
+
+main (_, _) = add 3 7

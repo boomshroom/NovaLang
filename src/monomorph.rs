@@ -31,6 +31,7 @@ impl Module {
         } = m;
 
         let defns = defns.into_iter().collect::<HashMap<_, _>>();
+        eprintln!("{:?}", defns);
         let mut new_defns = Vec::with_capacity(defns.len());
 
         let mut stack = Vec::new();
@@ -46,7 +47,7 @@ impl Module {
         ));
 
         while let Some(item) = stack.pop() {
-            if search(new_defns.as_slice(), &item) {
+            if search(new_defns.as_slice() types.as_slice(), &item) {
                 continue;
             }
             let (name, ty) = item;
@@ -73,7 +74,7 @@ impl Module {
     }
 }
 
-fn search(list: &[(String, Type, Node)], entry: &(String, Type)) -> bool {
+fn search(list: &[(String, Type, Node)], enums: &[(String, Scheme<EnumDecl>)], entry: &(String, Type)) -> bool {
     let &(ref i1, ref t1) = entry;
     for &(ref i2, ref t2, _) in list {
         if i1 == i2 && t1 == t2 {

@@ -1,4 +1,5 @@
 use super::wrap::{self, Context, Module, Builder, Function};
+use super::rt::build_rt;
 use super::super::desugar::{Pat, Arg};
 use super::super::w_ds::Type;
 use super::super::monomorph::{self, Node};
@@ -46,7 +47,9 @@ pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
     let modl = ctx.module(m_name.as_str())?;
     let mut c = Counter::new();
 
-    let vars = defns
+    let mut vars = build_rt(&ctx, &modl);
+
+    vars.extend(defns
         .iter()
         .map(|&(ref name, ref ty, _)| {
             /*let ll_name = if name.as_str() == "main" && ty == Type::Func(
@@ -73,7 +76,7 @@ pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
             unsafe { LLVMSetInitializer( g, LLVMGetUndef(ll_type) ) };
             Ok((Arg::Ident(name.clone()), ty.clone(), g))
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?);
 
     let main = modl.new_function("main", unsafe {
         LLVMFunctionType(
@@ -443,7 +446,9 @@ impl<'a> Compiler<'a> {
 
     fn compile_var(&mut self, i: Arg, t: Type) -> LLVMValueRef {
         let v = self.lookup(i, t);
-        if unsafe { LLVMIsAGlobalValue(v) == null() } {
+        if unsafe { LLVMIsAFunction(v) != null() } {
+            return v;
+        } else if unsafe { LLVMIsAGlobalValue(v) == null() } {
             return v;
         } else {
             return unsafe { LLVMBuildLoad(*self.build, v, self.counter.next().as_ptr()) };
