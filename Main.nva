@@ -2,6 +2,6 @@ module Main (main)
 
 data Tuple a b = Tuple a b
 
-add a b = LLVM_add_int64 (Tuple a b)
+add a b = llvm_add_int64 (Tuple a b)
 
-main (_, _) = add 3 7
+main _ = add 3 7

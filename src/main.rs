@@ -43,33 +43,31 @@ fn main() {
 
     let m = Module::new(file.as_slice()).expect("Parse error.");
 
-    println!(
-        "{}",
-        back::compile(monomorph::Module::new(
-            TypedMod::new(ModDS::new(m)).expect("Type error."),
-        )).unwrap()
-    );
-    /*
-    let stdin = stdin();
-    stdin
-        .lock()
-        .lines()
-        .map(|l| {
-            l.map_err(|_| "Read Error.")
-                .and_then(|l| Node::new(l.as_str())
-                    .map_err(|e| {println!("{:?}", e); "Parse Error"}))
-                //.and_then(Expr::new)
-                //.and_then(|e| Value::eval(e))
-                //.map_err(String::from)
-                //.and_then(|e| {w::run_infer(&e).map_err(|e| format!("{:?}", e))} )
-                .map(desugar::desugar)
-                .map_err(String::from)
-                //.map(|n| {println!("{:?}", n);n})
-                .and_then(|e| {w_ds::run_infer(&e).map_err(|e| format!("{:?}", e))} )
-                .map(monomorph::monomorph)
-                .and_then(|n| back::compile(n).map_err(|e| format!("{}", e)))
-        })
-        .map(|e| e.map(|m| println!("{}", m)))
-        .last();
-    */
+    //println!("{:?}", m);
+    println!("{}",
+             back::compile(monomorph::Module::new(TypedMod::new(ModDS::new(m))
+                     .expect("Type error.")))
+                 .unwrap());
+    // let stdin = stdin();
+    // stdin
+    // .lock()
+    // .lines()
+    // .map(|l| {
+    // l.map_err(|_| "Read Error.")
+    // .and_then(|l| Node::new(l.as_str())
+    // .map_err(|e| {println!("{:?}", e); "Parse Error"}))
+    // .and_then(Expr::new)
+    // .and_then(|e| Value::eval(e))
+    // .map_err(String::from)
+    // .and_then(|e| {w::run_infer(&e).map_err(|e| format!("{:?}", e))} )
+    // .map(desugar::desugar)
+    // .map_err(String::from)
+    // .map(|n| {println!("{:?}", n);n})
+    // .and_then(|e| {w_ds::run_infer(&e).map_err(|e| format!("{:?}", e))} )
+    // .map(monomorph::monomorph)
+    // .and_then(|n| back::compile(n).map_err(|e| format!("{}", e)))
+    // })
+    // .map(|e| e.map(|m| println!("{}", m)))
+    // .last();
+    //
 }
