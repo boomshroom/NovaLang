@@ -1,6 +1,7 @@
 use llvm_sys::prelude::*;
 use llvm_sys::core::*;
 use llvm_sys::target::*;
+use llvm_sys::LLVMLinkage;
 use std::ffi::{CString, CStr, NulError};
 use std::fmt::{self, Display, Formatter};
 use std::marker::PhantomData;
@@ -152,7 +153,7 @@ impl Context {
                 let struct_type = unsafe {
                     LLVMStructCreateNamed(
                         **self,
-                        CString::new(format!("{}.{}", i, hash(args.as_slice())))
+                        CString::new(format!("{}.{:016X}", i, hash(args.as_slice())))
                             .unwrap()
                             .as_ptr(),
                     )
@@ -183,7 +184,11 @@ impl Context {
                 };
 
                 let mut ts = e.iter()
-                    .map(|&(_, ref ts)| self.tuple_type(&mut ts.iter().map(|t| self.ll_type(t, types, structs, target)).collect::<Vec<_>>()))
+                    .map(|&(_, ref ts)| {
+                        self.tuple_type(&mut ts.iter()
+                            .map(|t| self.ll_type(t, types, structs, target))
+                            .collect::<Vec<_>>())
+                    })
                     .collect::<Vec<_>>();
                 // Please add unions, LLVM! PLEASE!!!! :(
                 match ts.len() {
@@ -290,6 +295,10 @@ impl<'a> Function<'a> {
             PhantomData,
             name,
         ))
+    }
+
+    pub fn set_linkage(&self, link: LLVMLinkage) {
+        unsafe { LLVMSetLinkage(**self, link) };
     }
 }
 

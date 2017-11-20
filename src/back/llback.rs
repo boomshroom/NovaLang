@@ -16,10 +16,11 @@ struct Compiler<'a> {
     lmod: &'a Module<'a>,
     build: Builder<'a>,
     vars: Vec<(Arg, Type, LLVMValueRef)>,
-    globals: &'a[(Arg, Type, LLVMValueRef)],
+    globals: &'a [(Arg, Type, LLVMValueRef)],
     func: Function<'a>,
     counter: &'a mut Counter,
     types: &'a HashMap<String, Scheme<EnumDecl>>,
+    structs: &'a mut HashMap<(String, Vec<Type>), LLVMTypeRef>,
     target: LLVMTargetDataRef,
 }
 
@@ -76,9 +77,10 @@ pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
     let data_layout = unsafe { LLVMCreateTargetDataLayout(machine) };
 
     let mut c = Counter::new();
+    let mut structs = HashMap::new();
 
-    let mut vars = build_rt(&ctx, &modl, data_layout);
     let types = types.into_iter().collect();
+    let mut vars = build_rt(&ctx, &modl, data_layout, &types, &mut structs);
 
     vars.extend(defns
         .iter()
@@ -94,7 +96,7 @@ pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
             // } else {
             // c.next()
             // };
-            let ll_type = ctx.ll_type(ty, &types, &mut HashMap::new(), data_layout);
+            let ll_type = ctx.ll_type(ty, &types, &mut structs, data_layout);
             let g = unsafe {
                 LLVMAddGlobal(
                     *modl,
@@ -126,6 +128,7 @@ pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
             0,
         )
     })?;
+
     let mut comp = Compiler {
         ctx: &ctx,
         lmod: &modl,
@@ -135,6 +138,7 @@ pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
         func: main,
         counter: &mut c,
         types: &types,
+        structs: &mut structs,
         target: data_layout,
     };
 
@@ -149,10 +153,13 @@ pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
     let main_fn = comp.compile_var(
         Arg::Ident(String::from("main")),
         Type::Func(
-            Box::new(Type::Alias(String::from("Tuple"), vec![
-                Type::Int,
-                Type::Ptr(Box::new(Type::Ptr(Box::new(Type::Int8)))),
-            ])),
+            Box::new(Type::Alias(
+                String::from("Tuple"),
+                vec![
+                    Type::Int,
+                    Type::Ptr(Box::new(Type::Ptr(Box::new(Type::Int8)))),
+                ],
+            )),
             Box::new(Type::Int),
         ),
     );
@@ -161,18 +168,29 @@ pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
     let argv = unsafe { LLVMGetParam(*comp.func, 1) };
 
     let args = unsafe {
-        LLVMGetUndef(LLVMStructType(
-            [
-                ctx.int_type(64),
-                LLVMPointerType(LLVMPointerType(ctx.int_type(8), 0), 0),
-            ].as_mut_ptr(),
-            2,
-            0,
-        ))
+        LLVMGetUndef(comp.ll_type(&Type::Alias(
+            String::from("Tuple"),
+            vec![
+                Type::Int,
+                Type::Ptr(
+                    Box::new(Type::Ptr(Box::new(Type::Int8)))
+                ),
+            ],
+        )))
     };
+
+    assert_eq!(unsafe { LLVMCountStructElementTypes(LLVMTypeOf(args)) }, 1);
+    let mut inner_ty = null();
+    unsafe { LLVMGetStructElementTypes(LLVMTypeOf(args), &mut inner_ty) }
+    eprintln!("{:?}", unsafe { LLVMGetTypeKind(LLVMTypeOf(args)) });
+    eprintln!("{:?}", unsafe { LLVMGetTypeKind(inner_ty) });
+
     let mut args = comp.build
-        .build_insert_value(args, argn, 0, "argn")
-        .and_then(|args| comp.build.build_insert_value(args, argv, 1, "argv"))?;
+        .build_insert_value(unsafe { LLVMGetUndef(inner_ty) }, argn, 0, "argn")
+        .and_then(|args| comp.build.build_insert_value(args, argv, 1, "argv"))
+        .and_then(|inner| {
+            comp.build.build_insert_value(args, inner, 0, "wrap")
+        })?;
 
     unsafe {
         LLVMBuildRet(
@@ -281,6 +299,7 @@ impl<'a> Compiler<'a> {
                     .new_function(self.counter.next(), unsafe { LLVMGetElementType(ll_type) })
                     .unwrap();
                 assert!(!f_obj.is_null(), "Function is null");
+                f_obj.set_linkage(LLVMLinkage::LLVMInternalLinkage);
                 //eprintln!("{:?}", unsafe { LLVMGetTypeKind(LLVMTypeOf(*f_obj)) });
                 // assert_eq!(, );
                 // let f_obj = self.lmod.new_function("", ll_type).unwrap();
@@ -294,6 +313,7 @@ impl<'a> Compiler<'a> {
                         counter: self.counter,
                         types: self.types,
                         target: self.target,
+                        structs: self.structs,
                         globals: self.globals,
                     };
                     /*let bb = unsafe {
@@ -348,6 +368,7 @@ impl<'a> Compiler<'a> {
                 let f_obj = self.lmod
                     .new_function(self.counter.next(), f_ptr_ty)
                     .unwrap();
+                f_obj.set_linkage(LLVMLinkage::LLVMInternalLinkage);
 
                 let f_obj = {
                     let mut new_ctx = Compiler {
@@ -359,6 +380,7 @@ impl<'a> Compiler<'a> {
                         counter: self.counter,
                         types: self.types,
                         target: self.target,
+                        structs: self.structs,
                         globals: self.globals,
                     };
 
@@ -630,7 +652,16 @@ impl<'a> Compiler<'a> {
                 },
             );
             match adt.len() {
-                1 => var_struct,
+                1 => {
+                    self.build
+                        .build_insert_value(
+                            unsafe { LLVMGetUndef(ll_type) },
+                            var_struct,
+                            0,
+                            self.counter.next(),
+                        )
+                        .unwrap()
+                }
                 n => {
                     let cast = unsafe {
                         LLVMBuildBitCast(
@@ -651,9 +682,7 @@ impl<'a> Compiler<'a> {
                     self.build
                         .build_insert_value(
                             adt,
-                            wrap::uint(variant, unsafe {
-                                LLVMStructGetTypeAtIndex(ll_type, 1)
-                            }),
+                            wrap::uint(variant, unsafe { LLVMStructGetTypeAtIndex(ll_type, 1) }),
                             1,
                             self.counter.next(),
                         )
@@ -665,17 +694,14 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn ll_type(&self, t: &Type) -> LLVMTypeRef {
-        self.ctx.ll_type(
-            t,
-            self.types,
-            &mut HashMap::new(),
-            self.target,
-        )
+    fn ll_type(&mut self, t: &Type) -> LLVMTypeRef {
+        self.ctx.ll_type(t, self.types, self.structs, self.target)
     }
 
-    fn tuple_type(&self, ts: &[Type]) -> LLVMTypeRef {
-        self.ctx.tuple_type(&mut ts.iter().map(|t|self.ll_type(t)).collect::<Vec<_>>())
+    fn tuple_type(&mut self, ts: &[Type]) -> LLVMTypeRef {
+        self.ctx.tuple_type(&mut ts.iter()
+            .map(|t| self.ll_type(t))
+            .collect::<Vec<_>>())
     }
 
     // fn zero_for_type(&self, t: &Type) -> LLVMValueRef {

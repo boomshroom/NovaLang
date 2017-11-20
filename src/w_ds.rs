@@ -235,12 +235,18 @@ impl TypedMod {
         );
 
         // Topo-sort to minimize out-of-order typechecking.
-        let mut visited = env.global.keys().filter_map(|x| match x {
-            &Arg::Ident(ref i) => Some(i.clone()),
-            &Arg::Internal(_) => None,
-        }).collect::<HashSet<_>>();
-        let mut stack = defns.iter().map(|&(ref k, _)| k.clone()).collect::<Vec<_>>();
-        let old_defns = defns.into_iter().collect::<HashMap<_,_>>();
+        let mut visited = env.global
+            .keys()
+            .filter_map(|x| match x {
+                &Arg::Ident(ref i) => Some(i.clone()),
+                &Arg::Internal(_) => None,
+            })
+            .collect::<HashSet<_>>();
+        let mut stack = defns
+            .iter()
+            .map(|&(ref k, _)| k.clone())
+            .collect::<Vec<_>>();
+        let old_defns = defns.into_iter().collect::<HashMap<_, _>>();
         let mut defns = Vec::with_capacity(old_defns.len());
 
         while let Some(i) = stack.pop() {
@@ -248,18 +254,21 @@ impl TypedMod {
                 continue;
             }
             visited.insert(i.clone());
-            let n = old_defns.get(&i).ok_or_else(||TypeError::Unbound(Arg::Ident(i.clone())))?;
+            let n = old_defns.get(&i).ok_or_else(|| {
+                TypeError::Unbound(Arg::Ident(i.clone()))
+            })?;
             stack.extend(n.free_vars().into_iter().filter_map(|a| match a {
                 &Arg::Ident(ref i) => Some(i.clone()),
-                &Arg::Internal(_) => None
+                &Arg::Internal(_) => None,
             }));
             defns.push((String::from(i), n));
-        };
+        }
 
         let v = Vec::with_capacity(defns.len());
 
         let (info, defns) = defns
-            .into_iter().rev()
+            .into_iter()
+            .rev()
             .map(|(i, n)| {
                 let (info, n) = infer(n, &mut env, &mut id)?;
                 let s = env.generalize(n.get_type(&info), &info);
@@ -275,7 +284,9 @@ impl TypedMod {
 
         let defns = defns
             .into_iter()
-            .map(|(i, n)| (i, env.generalize(n.apply(&info), &info).apply(&info)))
+            .map(|(i, n)| {
+                (i, env.generalize(n.apply(&info), &info).apply(&info))
+            })
             .chain(env.aliases.iter().flat_map(
                 |(i, e)| type_constr(i.as_str(), e),
             ))
@@ -410,10 +421,16 @@ impl TypedNode {
             Type::Func(_, b) => *b,
             Type::Closure(_, b, _) => *b,
             Type::Free(id) => {
-                for cls in info.constr.get(&id).expect(format!("Free type not constrained: {:?}", id).as_str()) {
+                for cls in info.constr.get(&id).expect(
+                    format!(
+                        "Free type not constrained: {:?}",
+                        id
+                    ).as_str(),
+                )
+                {
                     match cls {
                         &Class::Func(_, ref r) => return r.clone(),
-                        _ => {},
+                        _ => {}
                     };
                 }
                 panic!("Free type not a function: {:?}", id)
@@ -606,7 +623,7 @@ impl TypeEnv {
                 new_vars.insert(id);
                 match info.constr.get(&id) {
                     Some(c) => stack.extend(c.iter().flat_map(Types::ftv)),
-                    None => {},
+                    None => {}
                 };
             }
         }
@@ -616,7 +633,8 @@ impl TypeEnv {
             n => {
                 Scheme::Forall(
                     t,
-                    new_vars.into_iter()
+                    new_vars
+                        .into_iter()
                         .map(|id| {
                             let cls = info.constr
                                 .get(&id)
@@ -784,33 +802,7 @@ impl<T: Types + Clone> Scheme<T> {
         }
     }
 }
-/*
-impl Scheme<Type> {
-    fn unify(self, other: Scheme<Type>) -> Result<TypeInfo, TypeError> {
-        match (self, other) {
-            (Scheme::Type(t1), Scheme::Type(t2)) => t1.unify(t2),
-            (Scheme::Type(t1), Scheme::Forall(t2, cls)) | (Scheme::Forall(t2, cls), Scheme::Type(t1)) => {
-                let i = t1.clone().unify(t2);
-                let t = t1.apply(&i);
-                let cls = t.ftv().into_iter().map(|id| (id, cls.get(id).into_iter().flat_map(|x|x).collect()).collect();
-                match cls.len() {
-                    0 => Scheme::Type(t),
-                    _ => Scheme::Forall(t, cls),
-                }
-            },
-            (Scheme::Forall(t1, c1), Scheme::Forall(t2, c2)) => {
-                let i = t1.clone().unify(t2);
-                let t = t1.apply(&i);
-                let cls = t.ftv().into_iter().map(|id| (id, c1.get(id).into_iter().chain(c2.get(id)).flat_map(|x|x).collect()).collect();
-                match cls.len() {
-                    0 => Scheme::Type(t),
-                    _ => Scheme::Forall(t, cls),
-                }
-            }
-        }
-    }
-}
-*/
+
 impl Scheme<TypedNode> {
     pub fn get_type(&self, info: &TypeInfo) -> Scheme<Type> {
         match self {
@@ -818,7 +810,10 @@ impl Scheme<TypedNode> {
             &Scheme::Forall(ref t, ref ids) => {
                 let mut i = info.clone();
                 for &(ref id, ref cls) in ids {
-                    i.constr.entry(*id).or_insert(HashSet::with_capacity(cls.len())).extend(cls.clone());
+                    i.constr
+                        .entry(*id)
+                        .or_insert(HashSet::with_capacity(cls.len()))
+                        .extend(cls.clone());
                 }
                 Scheme::Forall(t.get_type(&i), ids.clone())
             }

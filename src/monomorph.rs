@@ -60,10 +60,20 @@ impl Module {
             match name.as_str() {
                 "llvm_add_int64" => {} // Builtin
                 _ => {
-                    let n = defns.get(&name).expect(format!("Undeclared name: {}\n{:?}", name, defns).as_str());
-                    info = info.compose(match n.get_type(&TypeInfo::new()) {
-                        Scheme::Type(t) | Scheme::Forall(t, _) => t,
-                    }.unify(ty.clone()).unwrap());
+                    let n = defns.get(&name).expect(
+                        format!(
+                            "Undeclared name: {}\n{:?}",
+                            name,
+                            defns
+                        ).as_str(),
+                    );
+                    info = info.compose(
+                        match n.get_type(&TypeInfo::new()) {
+                            Scheme::Type(t) |
+                            Scheme::Forall(t, _) => t,
+                        }.unify(ty.clone())
+                            .unwrap(),
+                    );
 
                     let n = match n {
                         &Scheme::Type(ref n) => n,
