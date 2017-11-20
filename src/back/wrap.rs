@@ -200,7 +200,7 @@ impl Context {
                             0,
                         )
                     },
-                    1 => unsafe { LLVMStructSetBody(struct_type, ts.as_mut_ptr(), 1, 0) },
+                    1 => unsafe { LLVMStructSetBody(struct_type, &mut ts[0], 1, 0) },
                     n => {
                         let union = self.union_type(ts, target);
                         let tag_size = (n as f64).log2().ceil() as u32;
@@ -324,7 +324,8 @@ impl<'a> Builder<'a> {
             let elem_kind = LLVMGetTypeKind(LLVMTypeOf(elem));
             match LLVMGetTypeKind(obj_ty) {
                 LLVMStructTypeKind => {
-                    assert!(idx < LLVMCountStructElementTypes(obj_ty));
+                    let l = LLVMCountStructElementTypes(obj_ty);
+                    assert!(idx < l, "index {} is out of range (max: {})", idx, l);
                     assert_eq!(
                         LLVMGetTypeKind(LLVMStructGetTypeAtIndex(obj_ty, idx)),
                         elem_kind,

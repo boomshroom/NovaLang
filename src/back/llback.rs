@@ -150,40 +150,41 @@ pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
         unsafe { LLVMBuildStore(*comp.build, v, p) };
     }
 
+    let main_arg_ty = Type::Alias(
+        String::from("Tuple"),
+        vec![
+            Type::Int,
+            Type::Ptr(Box::new(Type::Ptr(Box::new(Type::Int8)))),
+        ],
+    );
+
+    let args = unsafe { LLVMGetUndef(comp.ll_type(&main_arg_ty)) };
+
     let main_fn = comp.compile_var(
         Arg::Ident(String::from("main")),
-        Type::Func(
-            Box::new(Type::Alias(
-                String::from("Tuple"),
-                vec![
-                    Type::Int,
-                    Type::Ptr(Box::new(Type::Ptr(Box::new(Type::Int8)))),
-                ],
-            )),
-            Box::new(Type::Int),
-        ),
+        Type::Func(Box::new(main_arg_ty), Box::new(Type::Int)),
     );
 
     let argn = unsafe { LLVMGetParam(*comp.func, 0) };
     let argv = unsafe { LLVMGetParam(*comp.func, 1) };
 
-    let args = unsafe {
-        LLVMGetUndef(comp.ll_type(&Type::Alias(
-            String::from("Tuple"),
-            vec![
-                Type::Int,
-                Type::Ptr(
-                    Box::new(Type::Ptr(Box::new(Type::Int8)))
-                ),
-            ],
-        )))
-    };
+    // TODO: Non-deterministic failure!
+    let inner_ty = unsafe {
+        use llvm_sys::LLVMTypeKind::*;
 
-    assert_eq!(unsafe { LLVMCountStructElementTypes(LLVMTypeOf(args)) }, 1);
-    let mut inner_ty = null();
-    unsafe { LLVMGetStructElementTypes(LLVMTypeOf(args), &mut inner_ty) }
-    eprintln!("{:?}", unsafe { LLVMGetTypeKind(LLVMTypeOf(args)) });
-    eprintln!("{:?}", unsafe { LLVMGetTypeKind(inner_ty) });
+        assert_eq!(LLVMStructTypeKind, LLVMGetTypeKind(LLVMTypeOf(args)));
+        assert_eq!(LLVMCountStructElementTypes(LLVMTypeOf(args)), 1);
+        let mut inner_ty = null();
+        LLVMGetStructElementTypes(LLVMTypeOf(args), &mut inner_ty);
+        assert_eq!(LLVMStructTypeKind, LLVMGetTypeKind(inner_ty));
+        assert_eq!(LLVMCountStructElementTypes(inner_ty), 2);
+        let mut inner_v = [null(), null()];
+        LLVMGetStructElementTypes(inner_ty, inner_v.as_mut_ptr());
+        assert_eq!(LLVMIntegerTypeKind, LLVMGetTypeKind(inner_v[0]));
+        assert_eq!(LLVMPointerTypeKind, LLVMGetTypeKind(inner_v[1]));
+
+        inner_ty
+    };
 
     let mut args = comp.build
         .build_insert_value(unsafe { LLVMGetUndef(inner_ty) }, argn, 0, "argn")
@@ -567,7 +568,9 @@ impl<'a> Compiler<'a> {
                     "Incorrect number of arguments to constructor."
                 );
                 let arg = match cons.len() {
-                    1 => arg,
+                    1 => unsafe {
+                        LLVMBuildExtractValue(*self.build, arg, 0, self.counter.next().as_ptr())
+                    },
                     _ => {
                         let tag = unsafe {
                             LLVMBuildExtractValue(*self.build, arg, 1, self.counter.next().as_ptr())
@@ -587,11 +590,23 @@ impl<'a> Compiler<'a> {
                         let value = unsafe {
                             LLVMBuildExtractValue(*self.build, arg, 0, self.counter.next().as_ptr())
                         };
-                        unsafe {
-                            LLVMBuildBitCast(
+                        let ptr = unsafe {
+                            LLVMBuildAlloca(
                                 *self.build,
-                                value,
-                                self.tuple_type(&mut adt_args),
+                                LLVMTypeOf(value),
+                                self.counter.next().as_ptr(),
+                            )
+                        };
+                        unsafe { LLVMBuildStore(*self.build, value, ptr) };
+                        unsafe {
+                            LLVMBuildLoad(
+                                *self.build,
+                                LLVMBuildBitCast(
+                                    *self.build,
+                                    ptr,
+                                    LLVMPointerType(self.tuple_type(&mut adt_args), 0),
+                                    self.counter.next().as_ptr(),
+                                ),
                                 self.counter.next().as_ptr(),
                             )
                         }
@@ -599,6 +614,7 @@ impl<'a> Compiler<'a> {
                 };
                 let arg_types = match ty {
                     &Type::Tuple(ref ts) => &**ts,
+                    &Type::Alias(_, ref ts) => &**ts,
                     _ => &[],
                 };
                 args.into_iter()
@@ -663,17 +679,31 @@ impl<'a> Compiler<'a> {
                         .unwrap()
                 }
                 n => {
-                    let cast = unsafe {
-                        LLVMBuildBitCast(
+                    let l = unsafe { LLVMCountStructElementTypes(ll_type) };
+                    assert_eq!(2, l, "ADT has {} fields.", l);
+                    let ptr = unsafe {
+                        LLVMBuildAlloca(
                             *self.build,
-                            var_struct,
-                            LLVMStructGetTypeAtIndex(ll_type, 0),
+                            LLVMTypeOf(var_struct),
+                            self.counter.next().as_ptr(),
+                        )
+                    };
+                    unsafe { LLVMBuildStore(*self.build, var_struct, ptr) };
+                    let cast = unsafe {
+                        LLVMBuildLoad(
+                            *self.build,
+                            LLVMBuildBitCast(
+                                *self.build,
+                                ptr,
+                                LLVMPointerType(LLVMStructGetTypeAtIndex(ll_type, 0), 0),
+                                self.counter.next().as_ptr(),
+                            ),
                             self.counter.next().as_ptr(),
                         )
                     };
                     let adt = self.build
                         .build_insert_value(
-                            unsafe { LLVMGetUndef(var_type) },
+                            unsafe { LLVMGetUndef(ll_type) },
                             cast,
                             0,
                             self.counter.next(),

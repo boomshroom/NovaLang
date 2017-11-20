@@ -1,7 +1,14 @@
-module Main (main)
+module Main ()
 
 data Tuple a b = Tuple a b
+data Maybe a = Just a | Nothing
 
 add a b = llvm_add_int64 (Tuple a b)
 
-main _ = add 3 7
+map f a = ( case a of Just b -> Just (f b); Nothing -> Nothing )
+
+maybeAdd a = map (add a)
+
+orDefault d a = ( case a of Just b -> b; Nothing -> d )
+
+main (Tuple n _) = orDefault 1 (maybeAdd n (Just 7))

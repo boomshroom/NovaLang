@@ -255,6 +255,7 @@ impl TypedMod {
             }
             visited.insert(i.clone());
             let n = old_defns.get(&i).ok_or_else(|| {
+
                 TypeError::Unbound(Arg::Ident(i.clone()))
             })?;
             stack.extend(n.free_vars().into_iter().filter_map(|a| match a {
@@ -589,6 +590,15 @@ where
     }
 }
 
+impl<T: Types> Types for Option<T> {
+    fn ftv(&self) -> HashSet<TId> {
+        self.as_ref().map(Types::ftv).unwrap_or_default()
+    }
+    fn apply(self, s: &TypeInfo) -> Option<T> {
+        self.map(|t| t.apply(s))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TypeInfo {
     subst: HashMap<TId, Type>,
@@ -852,6 +862,17 @@ impl<T: Types> Scheme<T> {
     }
 }
 
+impl<T: Types> Scheme<Option<T>> {
+    fn unwrap(self) -> Option<Scheme<T>> {
+        match self {
+            Scheme::Type(Some(t)) => Some(Scheme::Type(t)),
+            Scheme::Forall(Some(t), cls) => Some(Scheme::Forall(t, cls)),
+            Scheme::Type(None) |
+            Scheme::Forall(None, _) => None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum TypeError {
     Unbound(Ident),
@@ -860,6 +881,7 @@ pub enum TypeError {
     Wrapped(NodeDS, Box<TypeError>),
     Unimplemented(NodeDS),
     Constrained(Type, Class),
+    ConstrArgs(Ident, u64, u64),
     Other,
 }
 
@@ -943,7 +965,12 @@ impl Type {
         }
     }
 
-    fn unify_pat(self, p: Pat, next: &mut TId) -> Result<(TypeInfo, TypeEnv), TypeError> {
+    fn unify_pat(
+        self,
+        p: Pat,
+        next: &mut TId,
+        enums: &HashMap<String, Scheme<EnumDecl>>,
+    ) -> Result<(TypeInfo, TypeEnv), TypeError> {
         match (self, p) {
             (t, Pat::Prim(i)) => {
                 Ok((
@@ -983,7 +1010,62 @@ impl Type {
                         unreachable!()
                     }
                 } else {
-                    Err(TypeError::Unbound(Arg::Ident(c.clone())))
+                    let (i, s) = enums
+                        .iter()
+                        .flat_map(|(i, s)| {
+                            s.map_r(|&EnumDecl(ref e)| {
+                                e.iter()
+                                    .filter(|&&(ref v, _)| v == &c)
+                                    .map(|&(_, ref f)| f.clone())
+                                    .next()
+                            }).unwrap()
+                                .map(|t| (i, t))
+                        })
+                        .next()
+                        .ok_or(TypeError::Unbound(Arg::Ident(c.clone())))?;
+                    let (ty, e) = match s {
+                        Scheme::Type(e) => (Type::Alias(i.clone(), Vec::new()), e),
+                        Scheme::Forall(e, v) => {
+                            let (s, c): (_, HashMap<_, _>) = v.iter()
+                                .map(|&(ref t, ref cls)| {
+                                    let id = next.next_id();
+                                    ((t.clone(), Type::Free(id)), (id, cls.clone()))
+                                })
+                                .unzip();
+                            let info = TypeInfo {
+                                subst: s,
+                                constr: c.clone(),
+                            };
+
+                            (
+                                Type::Alias(
+                                    i.clone(),
+                                    v.into_iter()
+                                        .map(|(t, _)| Type::Free(t).apply(&info))
+                                        .collect(),
+                                ),
+                                e.apply(&info),
+                            )
+                        }
+                    };
+
+                    let info = t.unify(ty)?;
+                    if e.len() != args.len() {
+                        return Err(TypeError::ConstrArgs(
+                            Arg::Ident(i.clone()),
+                            e.len() as u64,
+                            args.len() as u64,
+                        ));
+                    }
+                    let env = TypeEnv {
+                        global: HashMap::new(),
+                        local: args.into_iter()
+                            .zip(e.iter())
+                            .flat_map(|(p, t)| p.map(|p| (p, Scheme::Type(t.clone()))))
+                            .collect(),
+                        aliases: HashMap::new(),
+                    };
+                    Ok((info, env))
                 }
             }
         }
@@ -1066,7 +1148,11 @@ impl Type {
     }
 }
 
-fn infer_pat(p: &Pat, next: &mut TId) -> Result<Type, TypeError> {
+fn infer_pat(
+    p: &Pat,
+    next: &mut TId,
+    enums: &HashMap<String, Scheme<EnumDecl>>,
+) -> Result<Type, TypeError> {
     match p {
         &Pat::Prim(_) => Ok(next.next_t()),
         &Pat::Lit(_) => Ok(Type::Int),
@@ -1091,7 +1177,26 @@ fn infer_pat(p: &Pat, next: &mut TId) -> Result<Type, TypeError> {
                     Err(TypeError::Other)
                 }
             } else {
-                Err(TypeError::Unbound(Arg::Ident(c.clone())))
+                let (i, s) = enums
+                    .iter()
+                    .flat_map(|(i, s)| {
+                        s.map_r(|&EnumDecl(ref e)| {
+                            e.iter()
+                                .filter(|&&(ref v, _)| v == c)
+                                .map(|&(_, ref f)| f.clone())
+                                .next()
+                        }).unwrap()
+                            .map(|t| (i, t))
+                    })
+                    .next()
+                    .ok_or(TypeError::Unbound(Arg::Ident(c.clone())))?;
+                match s {
+                    Scheme::Type(_) => Ok(Type::Alias(i.clone(), Vec::new())),
+                    Scheme::Forall(_, ids) => Ok(Type::Alias(
+                        i.clone(),
+                        ids.iter().map(|_| next.next_t()).collect(),
+                    )),
+                }
             }
         }
     }
@@ -1109,7 +1214,10 @@ pub fn infer(
                 .or_else(|| env.global.get(i))
                 .map(|s| s.instantiate(next))
                 .map(|(info, t)| (info, TypedNode::Var(i.clone(), t)))
-                .ok_or(TypeError::Unbound(i.clone()))
+                .ok_or_else(|| {
+                    eprintln!("{:?}", env.global);
+                    TypeError::Unbound(i.clone())
+                })
         }
         &NodeDS::Lit(i) => Ok((TypeInfo::new(), TypedNode::Lit(i))),
         &NodeDS::Abs(ref i, ref e) => {
@@ -1137,7 +1245,10 @@ pub fn infer(
                 .filter_map(|i| match (env.local.get(i), env.global.get(i)) {
                     (Some(s1), _) => Some(Ok((i.clone(), s1.instantiate(next)))),
                     (None, Some(_)) => None,
-                    (None, None) => Some(Err(TypeError::Unbound(i.clone()))),
+                    (None, None) => {
+                        eprintln!("{:?}", env.global);
+                        Some(Err(TypeError::Unbound(i.clone())))
+                    }
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             if enumed.is_empty() {
@@ -1207,7 +1318,7 @@ pub fn infer(
         &NodeDS::Match(ref e, ref arms) => {
             let (sa, ta) = infer(e, env, next)?;
             let (s, t) = arms.iter()
-                .map(|&(ref p, _)| infer_pat(p, next))
+                .map(|&(ref p, _)| infer_pat(p, next, &env.aliases))
                 .collect::<Result<Vec<_>, TypeError>>()?
                 .into_iter()
                 .fold(Ok((sa, ta)), |r, p| {
@@ -1220,7 +1331,9 @@ pub fn infer(
                 })?;
 
             let (infos, envs): (Vec<_>, Vec<_>) = arms.iter()
-                .map(|&(ref p, _)| t.get_type(&s).unify_pat(p.clone(), next))
+                .map(|&(ref p, _)| {
+                    t.get_type(&s).unify_pat(p.clone(), next, &env.aliases)
+                })
                 .collect::<Result<Vec<(_, _)>, _>>()?
                 .into_iter()
                 .unzip();
