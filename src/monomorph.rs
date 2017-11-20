@@ -1,4 +1,4 @@
-use super::w_ds::{TypedNode, TypedMod, Type, TId, Types, Scheme, EnumDecl};
+use super::w_ds::{TypedNode, TypedMod, Type, TypeInfo, TId, Types, Scheme, EnumDecl};
 use super::desugar::{Arg, Pat};
 use std::iter::once;
 use std::collections::{HashSet, HashMap};
@@ -24,19 +24,32 @@ pub struct Module {
 
 impl Module {
     pub fn new(m: TypedMod) -> Module {
-        let TypedMod { name, exports, types, defns } = m;
+        let TypedMod {
+            name,
+            exports,
+            types,
+            defns,
+        } = m;
 
         let defns = defns.into_iter().collect::<HashMap<_, _>>();
-        //eprintln!("{:?}", defns);
         let mut new_defns = Vec::with_capacity(defns.len());
 
         let mut stack = Vec::new();
-        stack.push((String::from("main"),
-                    Type::Func(Box::new(Type::Alias(String::from("Tuple"), vec![
-                    Type::Int,
-                    Type::Ptr(Box::new(Type::Ptr(Box::new(Type::Int8)))),
-                ])),
-                               Box::new(Type::Int))));
+        stack.push((
+            String::from("main"),
+            Type::Func(
+                Box::new(Type::Alias(
+                    String::from("Tuple"),
+                    vec![
+                        Type::Int,
+                        Type::Ptr(Box::new(Type::Ptr(Box::new(Type::Int8)))),
+                    ],
+                )),
+                Box::new(Type::Int),
+            ),
+        ));
+
+        let mut info = TypeInfo::new();
 
         while let Some(item) = stack.pop() {
             if search(new_defns.as_slice(), &item) {
@@ -45,18 +58,21 @@ impl Module {
 
             let (name, ty) = item;
             match name.as_str() {
-                "llvm_add_int64" => {}, // Builtin
+                "llvm_add_int64" => {} // Builtin
                 _ => {
-                    let n = match defns.get(&name) {
-                        Some(&Scheme::Type(ref n)) => n,
-                        Some(&Scheme::Forall(ref n, _)) => n,
-                        None => panic!("Undeclared name: {}\n{:?}", name, defns),
+                    let n = defns.get(&name).expect(format!("Undeclared name: {}\n{:?}", name, defns).as_str());
+                    info = info.compose(match n.get_type(&TypeInfo::new()) {
+                        Scheme::Type(t) | Scheme::Forall(t, _) => t,
+                    }.unify(ty.clone()).unwrap());
+
+                    let n = match n {
+                        &Scheme::Type(ref n) => n,
+                        &Scheme::Forall(ref n, _) => n,
                     };
 
-                    let info = n.get_type().unify(ty.clone()).unwrap();
                     let node = monomorph(n.clone().apply(&info));
                     stack.extend(node.free_vars());
-                    new_defns.push((name, ty, node));
+                    new_defns.push((name, ty.apply(&info), node));
                 }
             }
         }
@@ -87,9 +103,11 @@ pub fn monomorph(n: TypedNode) -> Node {
         TypedNode::Abs(a, b, at, c) => Node::Abs(a, Box::new(monomorph(*b)), at, c),
         TypedNode::App(f, a) => Node::App(Box::new(monomorph(*f)), Box::new(monomorph(*a))),
         TypedNode::Match(a, bs, t) => {
-            Node::Match(Box::new(monomorph(*a)),
-                        bs.into_iter().map(|(p, n)| (p, monomorph(n))).collect(),
-                        t)
+            Node::Match(
+                Box::new(monomorph(*a)),
+                bs.into_iter().map(|(p, n)| (p, monomorph(n))).collect(),
+                t,
+            )
         }
         TypedNode::Let(i, e, b) => {
             match *e {
@@ -97,10 +115,12 @@ pub fn monomorph(n: TypedNode) -> Node {
                 Scheme::Forall(e, _) => {
                     let uses = uses(&*b, i.as_str());
                     uses.into_iter().fold(monomorph(*b), |b, t| {
-                        let info = e.get_type().unify(t).unwrap();
-                        Node::Let(i.clone(),
-                                  Box::new(monomorph(e.clone().apply(&info))),
-                                  Box::new(b))
+                        let info = e.get_type(&TypeInfo::new()).unify(t).unwrap();
+                        Node::Let(
+                            i.clone(),
+                            Box::new(monomorph(e.clone().apply(&info))),
+                            Box::new(b),
+                        )
                     })
                 }
             }
@@ -121,22 +141,26 @@ fn uses(s: &TypedNode, i: &str) -> HashSet<Type> {
         &TypedNode::App(ref f, ref a) => &uses(f, i) | &uses(a, i),
         &TypedNode::Let(ref i2, _, _) if i == i2 => HashSet::new(),
         &TypedNode::Let(_, ref e, ref b) => {
-            &uses(match &**e {
-                      &Scheme::Type(ref e) |
-                      &Scheme::Forall(ref e, _) => e,
-                  },
-                  i) | &uses(b, i)
+            &uses(
+                match &**e {
+                    &Scheme::Type(ref e) |
+                    &Scheme::Forall(ref e, _) => e,
+                },
+                i,
+            ) | &uses(b, i)
         }
         &TypedNode::Match(ref a, ref arms, _) => {
             &uses(a, i) |
-            &arms.iter()
-                .flat_map(|&(ref p, ref b)| if p.bound_vars()
-                    .contains(&Arg::Ident(String::from(i))) {
-                    HashSet::new()
-                } else {
-                    uses(b, i)
-                })
-                .collect()
+                &arms.iter()
+                    .flat_map(|&(ref p, ref b)| if p.bound_vars().contains(&Arg::Ident(
+                        String::from(i),
+                    ))
+                    {
+                        HashSet::new()
+                    } else {
+                        uses(b, i)
+                    })
+                    .collect()
         }
         &TypedNode::Constr(ref args, _, _) => args.iter().flat_map(|a| uses(a, i)).collect(),
     }
@@ -151,9 +175,11 @@ impl Node {
                 if c.len() == 0 {
                     Type::Func(Box::new(p.clone()), Box::new(b.get_type()))
                 } else {
-                    Type::Closure(Box::new(p.clone()),
-                                  Box::new(b.get_type()),
-                                  c.iter().map(|&(_, ref t)| t.clone()).collect())
+                    Type::Closure(
+                        Box::new(p.clone()),
+                        Box::new(b.get_type()),
+                        c.iter().map(|&(_, ref t)| t.clone()).collect(),
+                    )
                 }
             }
             Node::App(ref f, _) => f.get_ret_type().unwrap_or(Type::Free(TId::new())),

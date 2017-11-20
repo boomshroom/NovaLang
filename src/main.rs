@@ -44,10 +44,12 @@ fn main() {
     let m = Module::new(file.as_slice()).expect("Parse error.");
 
     //println!("{:?}", m);
-    println!("{}",
-             back::compile(monomorph::Module::new(TypedMod::new(ModDS::new(m))
-                     .expect("Type error.")))
-                 .unwrap());
+    println!(
+        "{}",
+        back::compile(monomorph::Module::new(
+            TypedMod::new(ModDS::new(m)).expect("Type error."),
+        )).unwrap()
+    );
     // let stdin = stdin();
     // stdin
     // .lock()

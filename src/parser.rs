@@ -141,11 +141,14 @@ fn parse_bin_expr_full(src: &[u8], prec: i64, lhs: Node) -> IResult<&[u8], Node>
     };
     if tok.prec() > prec {
         let (i2, right) = try_parse!(i1, ws_nl!(apply!(parse_bin_expr, tok.prec())));
-        parse_bin_expr_full(i2,
-                            prec,
-                            Node::FunCall(Box::new(Node::FunCall(Box::new(Node::Op(tok)),
-                                                                 Box::new(lhs))),
-                                          Box::new(right)))
+        parse_bin_expr_full(
+            i2,
+            prec,
+            Node::FunCall(
+                Box::new(Node::FunCall(Box::new(Node::Op(tok)), Box::new(lhs))),
+                Box::new(right),
+            ),
+        )
     } else {
         IResult::Done(src, lhs)
     }
@@ -370,10 +373,13 @@ pub fn test_exprs() {
     assert_eq!(type_expr(b"Bool"), expected);
     let expected = IResult::Done(&[] as &[u8], Type::Tuple(vec![Type::Int, Type::Int]));
     assert_eq!(type_expr(b"(Int, Int)"), expected);
-    let expected = IResult::Done(&[] as &[u8],
-                                 Type::Func(Box::new(Type::Int),
-                                            Box::new(Type::Func(Box::new(Type::Int),
-                                                                Box::new(Type::Bool)))));
+    let expected = IResult::Done(
+        &[] as &[u8],
+        Type::Func(
+            Box::new(Type::Int),
+            Box::new(Type::Func(Box::new(Type::Int), Box::new(Type::Bool))),
+        ),
+    );
     assert_eq!(type_expr(b"(Int -> Int -> Bool)"), expected);
     let expected = IResult::Done(&[] as &[u8], Type::Ptr(Box::new(Type::Unit)));
     assert_eq!(type_expr(b"Ptr ()"), expected);
@@ -390,27 +396,32 @@ pub fn test_exprs() {
     eprintln!("{:?}", decl(b"map : (Int -> Int) -> Int -> Int").unwrap());
     eprintln!("{:?}", defn(b"map f = f").unwrap());
     eprintln!("");
-    let expected = IResult::Done(&[] as &[u8],
-                                 DataDecl {
-                                     name: "MyUnit".to_owned(),
-                                     params: Vec::new(),
-                                     variants: vec![("MyUnit".to_owned(), Vec::new())],
-                                 });
+    let expected = IResult::Done(
+        &[] as &[u8],
+        DataDecl {
+            name: "MyUnit".to_owned(),
+            params: Vec::new(),
+            variants: vec![("MyUnit".to_owned(), Vec::new())],
+        },
+    );
     assert_eq!(data_decl(b"data MyUnit = MyUnit"),expected);
-    let expected = IResult::Done(&[] as &[u8],
-                                 DataDecl {
-                                     name: "MyInt".to_owned(),
-                                     params: Vec::new(),
-                                     variants: vec![("MyInt".to_owned(), vec![Type::Int])],
-                                 });
+    let expected = IResult::Done(
+        &[] as &[u8],
+        DataDecl {
+            name: "MyInt".to_owned(),
+            params: Vec::new(),
+            variants: vec![("MyInt".to_owned(), vec![Type::Int])],
+        },
+    );
     assert_eq!(data_decl(b"data MyInt = MyInt Int"), expected);
-    let expected =
-        IResult::Done(&[] as &[u8],
-                      DataDecl {
-                          name: "Wrapper".to_owned(),
-                          params: vec!["a".to_owned()],
-                          variants: vec![("Wrapper".to_owned(), vec![Type::Param("a".to_owned())])],
-                      });
+    let expected = IResult::Done(
+        &[] as &[u8],
+        DataDecl {
+            name: "Wrapper".to_owned(),
+            params: vec!["a".to_owned()],
+            variants: vec![("Wrapper".to_owned(), vec![Type::Param("a".to_owned())])],
+        },
+    );
     assert_eq!(data_decl(b"data Wrapper a = Wrapper a"), expected);
     let expected = IResult::Done(
         &[] as &[u8],

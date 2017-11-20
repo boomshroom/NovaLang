@@ -65,15 +65,20 @@ pub fn desugar(n: Node) -> NodeDS {
 
 impl ModDS {
     pub fn new(m: Module) -> ModDS {
-        let Module { name, exports, decls } = m;
+        let Module {
+            name,
+            exports,
+            decls,
+        } = m;
         let mut types = Vec::new();
         let mut defns = Vec::new();
         for d in decls {
             match d {
                 Decl::Defn(Defn { name, args, val }) => {
-                    let temp = Node::Let(vec![(Pattern::Constructor(String::from("a"), args),
-                                               val)],
-                                         Box::new(Node::Lit(Literal::Int(0))));
+                    let temp = Node::Let(
+                        vec![(Pattern::Constructor(String::from("a"), args), val)],
+                        Box::new(Node::Lit(Literal::Int(0))),
+                    );
                     if let NodeDS::Let(_, body, _) = desugar(temp) {
                         defns.push((name, *body));
                     } else {
@@ -102,8 +107,10 @@ fn desugar_priv(n: Node, next: &mut Counter) -> NodeDS {
         Node::Lit(Literal::Unit) => NodeDS::Var(Arg::Ident(String::from("()"))),
         Node::Op(o) => NodeDS::Var(op_to_func(o)),
         Node::FunCall(f, a) => {
-            NodeDS::App(Box::new(desugar_priv(*f, next)),
-                        Box::new(desugar_priv(*a, next)))
+            NodeDS::App(
+                Box::new(desugar_priv(*f, next)),
+                Box::new(desugar_priv(*a, next)),
+            )
         }
         Node::Ident(i) => NodeDS::Var(Arg::Ident(i)),
         Node::Let(binds, body) => {
@@ -122,9 +129,9 @@ fn desugar_priv(n: Node, next: &mut Counter) -> NodeDS {
                     Pattern::Constructor(i, args) => {
                         if i.starts_with(char::is_lowercase) {
                             // eta reduction.
-                            let inner = args.into_iter()
-                                .rev()
-                                .fold(desugar_priv(b, next), |body, arg| match arg {
+                            let inner = args.into_iter().rev().fold(
+                                desugar_priv(b, next),
+                                |body, arg| match arg {
                                     Pattern::Ident(i) => {
                                         NodeDS::Abs(Some(Arg::Ident(i)), Box::new(body))
                                     }
@@ -139,13 +146,14 @@ fn desugar_priv(n: Node, next: &mut Counter) -> NodeDS {
                                             )),
                                         )
                                     }
-                                });
+                                },
+                            );
                             NodeDS::Let(i, Box::new(inner), Box::new(body))
                         } else {
-                            NodeDS::Match(Box::new(desugar_priv(b, next)),
-                                          vec![simplify_arm(Pattern::Constructor(i, args),
-                                                            body,
-                                                            next)])
+                            NodeDS::Match(
+                                Box::new(desugar_priv(b, next)),
+                                vec![simplify_arm(Pattern::Constructor(i, args), body, next)],
+                            )
                         }
                     }
                     Pattern::Wild => panic!("Can't assign to a wild card."),
@@ -179,19 +187,26 @@ fn desugar_priv(n: Node, next: &mut Counter) -> NodeDS {
             }
         }
         Node::Match(arg, arms) => {
-            NodeDS::Match(Box::new(desugar_priv(*arg, next)),
-                          arms.into_iter()
-                              .map(|(p, b)| simplify_arm(p, desugar_priv(b, next), next))
-                              .collect())
+            NodeDS::Match(
+                Box::new(desugar_priv(*arg, next)),
+                arms.into_iter()
+                    .map(|(p, b)| simplify_arm(p, desugar_priv(b, next), next))
+                    .collect(),
+            )
         }
         Node::Tuple(args) => {
             let tuple = tuple_fn(args.len());
-            args.into_iter().fold(NodeDS::Var(Arg::Ident(tuple)),
-                                  |f, e| NodeDS::App(Box::new(f), Box::new(desugar_priv(e, next))))
+            args.into_iter().fold(
+                NodeDS::Var(Arg::Ident(tuple)),
+                |f, e| {
+                    NodeDS::App(Box::new(f), Box::new(desugar_priv(e, next)))
+                },
+            )
         }
         Node::If(cond, t, f) => {
-            NodeDS::Match(Box::new(desugar_priv(*cond, next)),
-                          vec![
+            NodeDS::Match(
+                Box::new(desugar_priv(*cond, next)),
+                vec![
                     (
                         Pat::Cons(String::from("True"), vec![]),
                         desugar_priv(*t, next)
@@ -200,7 +215,8 @@ fn desugar_priv(n: Node, next: &mut Counter) -> NodeDS {
                         Pat::Cons(String::from("False"), vec![]),
                         desugar_priv(*f, next)
                     ),
-                ])
+                ],
+            )
         }
     }
 }
@@ -212,8 +228,13 @@ fn call(f: String, e1: NodeDS, e2: NodeDS) -> NodeDS {
         (e2, e1 @ NodeDS::Lit(_)) => (e1, e2),
         e => e,
     };
-    NodeDS::App(Box::new(NodeDS::App(Box::new(NodeDS::Var(Arg::Ident(f))), Box::new(e1))),
-                Box::new(e2))
+    NodeDS::App(
+        Box::new(NodeDS::App(
+            Box::new(NodeDS::Var(Arg::Ident(f))),
+            Box::new(e1),
+        )),
+        Box::new(e2),
+    )
 }
 // fn simplify_pat(p: Pattern) -> Pat {
 // match p {
@@ -236,8 +257,8 @@ fn simplify_arm(p: Pattern, n: NodeDS, next: &mut Counter) -> (Pat, NodeDS) {
         Pattern::Lit(Literal::True) => (Pat::Cons(String::from("True"), Vec::new()), n),
         Pattern::Lit(Literal::False) => (Pat::Cons(String::from("False"), Vec::new()), n),
         Pattern::Lit(Literal::Int(i)) => (Pat::Lit(i), n),
-        Pattern::Constructor(ref c, ref args) if c.starts_with(char::is_lowercase) &&
-                                                 args.len() == 0 => {
+        Pattern::Constructor(ref c, ref args)
+            if c.starts_with(char::is_lowercase) && args.len() == 0 => {
             (Pat::Prim(Some(Arg::Ident(c.clone()))), n)
         }
         Pattern::Constructor(c, args) => {
@@ -248,8 +269,8 @@ fn simplify_arm(p: Pattern, n: NodeDS, next: &mut Counter) -> (Pat, NodeDS) {
                 .map(|(i, a)| match a {
                     Pattern::Wild => None,
                     Pattern::Ident(i) => Some(Arg::Ident(i)),
-                    Pattern::Constructor(ref i, ref a) if a.len() == 0 &&
-                                                          i.starts_with(char::is_lowercase) => {
+                    Pattern::Constructor(ref i, ref a)
+                        if a.len() == 0 && i.starts_with(char::is_lowercase) => {
                         Some(Arg::Ident(i.clone()))
                     }
                     p => {
@@ -259,12 +280,14 @@ fn simplify_arm(p: Pattern, n: NodeDS, next: &mut Counter) -> (Pat, NodeDS) {
                     }
                 })
                 .collect();
-            (Pat::Cons(c, new_args),
-             v.into_iter().rev().fold(n, |n, (i, v)| {
-                let (p, new_n) = simplify_arm(args[i].clone(), n, next);
-                NodeDS::Match(Box::new(NodeDS::Var(v)), vec![(p, new_n)])
+            (
+                Pat::Cons(c, new_args),
+                v.into_iter().rev().fold(n, |n, (i, v)| {
+                    let (p, new_n) = simplify_arm(args[i].clone(), n, next);
+                    NodeDS::Match(Box::new(NodeDS::Var(v)), vec![(p, new_n)])
 
-            }))
+                }),
+            )
         }
         Pattern::Tuple(args) => {
             simplify_arm(Pattern::Constructor(tuple_fn(args.len()), args), n, next)
@@ -311,8 +334,9 @@ impl NodeDS {
             }
             NodeDS::Match(ref arg, ref arms) => {
                 &arg.free_vars() |
-                &(arms.iter().flat_map(|&(ref p, ref a)| &a.free_vars() - &p.bound_vars()))
-                    .collect()
+                    &(arms.iter().flat_map(|&(ref p, ref a)| {
+                        &a.free_vars() - &p.bound_vars()
+                    })).collect()
             }
         }
     }
