@@ -261,7 +261,6 @@ impl TypedMod {
         let (info, defns) = defns
             .into_iter().rev()
             .map(|(i, n)| {
-                println!("{}", i);
                 let (info, n) = infer(n, &mut env, &mut id)?;
                 let s = env.generalize(n.get_type(&info), &info);
                 env.global.insert(Arg::Ident(i.clone()), s);
