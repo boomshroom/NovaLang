@@ -272,9 +272,10 @@ impl TypedMod {
             .rev()
             .map(|(i, n)| {
                 let (info, n) = infer(n, &mut env, &mut id)?;
-                let s = env.generalize(n.get_type(&info), &info);
-                env.global.insert(Arg::Ident(i.clone()), s);
-                Ok((i, (info, n)))
+                let info = info.canon();
+                let s = env.generalize(n.apply(&info), &info);
+                env.global.insert(Arg::Ident(i.clone()), s.get_type(&info));
+                Ok((i, (info, s)))
             })
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
@@ -286,7 +287,11 @@ impl TypedMod {
         let defns = defns
             .into_iter()
             .map(|(i, n)| {
-                (i, env.generalize(n.apply(&info), &info).apply(&info))
+                let n = n.apply(&info);
+                if i == "maybeAdd" {
+                    eprintln!("{:?}", n);
+                }
+                (i, n)
             })
             .chain(env.aliases.iter().flat_map(
                 |(i, e)| type_constr(i.as_str(), e),
@@ -529,15 +534,37 @@ impl<T: Types> Types for Scheme<T> {
         }
     }
 
-    fn apply(self, s: &TypeInfo) -> Scheme<T> {
+    fn apply(self, info: &TypeInfo) -> Scheme<T> {
         match self {
-            Scheme::Type(t) => Scheme::Type(t.apply(s)),
+            Scheme::Type(t) => Scheme::Type(t.apply(info)),
             Scheme::Forall(t, v) => {
                 //let mut s = s.clone();
                 //v.iter().map(|&(id, _)| { s.remove(id); }).last();
+                let mut dups = HashSet::new();
                 Scheme::Forall(
-                    t.apply(&s),
-                    v.into_iter().map(|(id, c)| (id, c.apply(&s))).collect(),
+                    t.apply(info),
+                    v.into_iter()
+                        .filter_map(|(id, c)| match Type::Free(id).apply(info) {
+                            Type::Free(new_id) => {
+                                match dups.contains(&new_id) {
+                                    true => None,
+                                    false => {
+                                        dups.insert(new_id);
+                                        Some((new_id, c))
+                                    }
+                                }
+                            }
+                            t => {
+                                match c.iter().all(|c| t.in_class(c)) {
+                                    true => None,
+                                    false => {
+                                        panic!("Unified type ({:?}) not in classes ({:?}).", t, c)
+                                    }
+                                }
+                            }
+                        })
+                        .map(|(id, c)| (id, c.apply(info)))
+                        .collect(),
                 )
             }
         }
@@ -783,6 +810,32 @@ impl TypeInfo {
         }
         s
     }
+
+    fn canon(&self) -> TypeInfo {
+        let TypeInfo {
+            ref subst,
+            ref constr,
+        } = *self;
+        let subst = subst
+            .iter()
+            .map(|(&id, t)| (id, t.clone().apply(&self)))
+            .collect();
+        let constr = constr
+            .iter()
+            .filter_map(|(&id, c)| {
+                /*match subst.contains_key(&id) {
+                true => None,
+                false if c.len() == 0 => None,
+                false if c.len() != 0 => Some((id, c.clone().apply(&self))),
+            }*/
+                match c.len() {
+                    0 => None,
+                    _ => Some((id, c.clone().apply(&self))),
+                }
+            })
+            .collect();
+        TypeInfo { subst, constr }
+    }
 }
 
 impl<T: Types + Clone> Scheme<T> {
@@ -794,7 +847,7 @@ impl<T: Types + Clone> Scheme<T> {
                 let (s, c): (_, HashMap<_, _>) = v.iter()
                     .map(|&(ref t, ref cls)| {
                         let id = next.next_id();
-                        ((t.clone(), Type::Free(id)), (id, cls.clone()))
+                        ((*t, Type::Free(id)), (id, cls.clone()))
                     })
                     .unzip();
                 let info = TypeInfo {
@@ -1212,8 +1265,13 @@ pub fn infer(
             env.local
                 .get(i)
                 .or_else(|| env.global.get(i))
-                .map(|s| s.instantiate(next))
-                .map(|(info, t)| (info, TypedNode::Var(i.clone(), t)))
+                .map(|s| {
+                    let (info, t) = s.instantiate(next);
+                    /*if i == &Arg::Ident(String::from("map")) {
+                        eprintln!("{:?}\n{:?}\n{:?}\n", s, t, info);
+                    }*/
+                    (info, TypedNode::Var(i.clone(), t))
+                })
                 .ok_or_else(|| {
                     eprintln!("{:?}", env.global);
                     TypeError::Unbound(i.clone())

@@ -134,9 +134,10 @@ impl Context {
                 };
                 self.tuple_type(&mut [f_ty, cap])
             }
-            Type::Free(_) => {
-                eprintln!("Free type made to compilation!");
-                self.int_type(64) // Assume Int
+            Type::Free(id) => {
+                eprintln!("Free type made to compilation: {:?}", id);
+                //unsafe { LLVMVoidTypeInContext(**self) }
+                self.int_type(64)
             }
             Type::Ptr(ref t) => unsafe {
                 LLVMPointerType(self.ll_type(&**t, types, structs, target), 0)

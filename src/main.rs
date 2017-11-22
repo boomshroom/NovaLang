@@ -2,6 +2,7 @@
 use std::io::Read;
 use std::env;
 use std::fs::File;
+use std::collections::HashMap;
 
 #[macro_use]
 extern crate nom;
@@ -44,12 +45,9 @@ fn main() {
     let m = Module::new(file.as_slice()).expect("Parse error.");
 
     //println!("{:?}", m);
-    println!(
-        "{}",
-        back::compile(monomorph::Module::new(
-            TypedMod::new(ModDS::new(m)).expect("Type error."),
-        )).unwrap()
-    );
+    let typed = TypedMod::new(ModDS::new(m)).expect("Type error.");
+    //println!("{:?}", typed.defns.into_iter().collect::<HashMap<_,_>>());
+    println!("{}", back::compile(monomorph::Module::new(typed)).unwrap());
     // let stdin = stdin();
     // stdin
     // .lock()

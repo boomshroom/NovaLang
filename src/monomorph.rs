@@ -34,6 +34,8 @@ impl Module {
         let defns = defns.into_iter().collect::<HashMap<_, _>>();
         let mut new_defns = Vec::with_capacity(defns.len());
 
+        //eprintln!("{:?}", defns);
+
         let mut stack = Vec::new();
         stack.push((
             String::from("main"),
@@ -162,14 +164,10 @@ fn uses(s: &TypedNode, i: &str) -> HashSet<Type> {
         &TypedNode::Match(ref a, ref arms, _) => {
             &uses(a, i) |
                 &arms.iter()
-                    .flat_map(|&(ref p, ref b)| if p.bound_vars().contains(&Arg::Ident(
-                        String::from(i),
-                    ))
-                    {
-                        HashSet::new()
-                    } else {
-                        uses(b, i)
+                    .filter(|&&(ref p, _)| {
+                        !p.bound_vars().contains(&Arg::Ident(String::from(i)))
                     })
+                    .flat_map(|&(_, ref b)| uses(b, i))
                     .collect()
         }
         &TypedNode::Constr(ref args, _, _) => args.iter().flat_map(|a| uses(a, i)).collect(),

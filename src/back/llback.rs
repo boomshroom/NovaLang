@@ -48,8 +48,6 @@ pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
         defns,
     } = m;
 
-    eprintln!("{:?}", defns);
-
     let ctx = Context::new();
     let modl = ctx.module(m_name.as_str())?;
 
@@ -169,7 +167,7 @@ pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
     let argv = unsafe { LLVMGetParam(*comp.func, 1) };
 
     // TODO: Non-deterministic failure!
-    let inner_ty = unsafe {
+    let (inner_ty, (argn_idx, argv_idx)) = unsafe {
         use llvm_sys::LLVMTypeKind::*;
 
         assert_eq!(LLVMStructTypeKind, LLVMGetTypeKind(LLVMTypeOf(args)));
@@ -180,15 +178,21 @@ pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
         assert_eq!(LLVMCountStructElementTypes(inner_ty), 2);
         let mut inner_v = [null(), null()];
         LLVMGetStructElementTypes(inner_ty, inner_v.as_mut_ptr());
-        assert_eq!(LLVMIntegerTypeKind, LLVMGetTypeKind(inner_v[0]));
-        assert_eq!(LLVMPointerTypeKind, LLVMGetTypeKind(inner_v[1]));
 
-        inner_ty
+        let idxs = match (LLVMGetTypeKind(inner_v[0]), LLVMGetTypeKind(inner_v[1])) {
+            (LLVMIntegerTypeKind, LLVMPointerTypeKind) => (0, 1),
+            (LLVMPointerTypeKind, LLVMIntegerTypeKind) => panic!("Arguments swapped!"),//(1,0),
+            (k1, k2) => panic!("Expecting int and pointer. Got {:?} and {:?}", k1, k2),
+        };
+
+        (inner_ty, idxs)
     };
 
     let mut args = comp.build
-        .build_insert_value(unsafe { LLVMGetUndef(inner_ty) }, argn, 0, "argn")
-        .and_then(|args| comp.build.build_insert_value(args, argv, 1, "argv"))
+        .build_insert_value(unsafe { LLVMGetUndef(inner_ty) }, argn, argn_idx, "argn")
+        .and_then(|args| {
+            comp.build.build_insert_value(args, argv, argv_idx, "argv")
+        })
         .and_then(|inner| {
             comp.build.build_insert_value(args, inner, 0, "wrap")
         })?;
@@ -464,7 +468,7 @@ impl<'a> Compiler<'a> {
                 return v;
             }
         }
-        eprintln!("{:?}", self.vars);
+        eprintln!("{:?}\n{:?}\n", self.vars, self.globals);
         panic!("Value undefined: {:?} :: {:?}", i, t)
     }
 

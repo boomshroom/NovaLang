@@ -11,4 +11,4 @@ maybeAdd a = map (add a)
 
 orDefault d a = ( case a of Just b -> b; Nothing -> d )
 
-main (Tuple n _) = orDefault 1 (maybeAdd n (Just 7))
+main (Tuple n _) = orDefault 1 (maybeAdd 3 (maybeAdd n (Just 7)))
