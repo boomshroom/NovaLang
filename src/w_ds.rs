@@ -236,6 +236,14 @@ impl TypedMod {
             int_binop_ty.clone(),
         );
         env.global.insert(
+            Arg::Ident(String::from("llvm_sub_int64")),
+            int_binop_ty.clone(),
+        );
+        env.global.insert(
+            Arg::Ident(String::from("llvm_mul_int64")),
+            int_binop_ty.clone(),
+        );
+        env.global.insert(
             Arg::Ident(String::from("llvm_div_int64")),
             int_binop_ty.clone(),
         );
@@ -277,8 +285,14 @@ impl TypedMod {
             .into_iter()
             .rev()
             .map(|(i, n)| {
+                let r = id.next_t();
+                env.global.insert(
+                    Arg::Ident(i.clone()),
+                    Scheme::Type(r.clone()),
+                );
                 let (info, n) = infer(n, &mut env, &mut id)?;
-                let info = info.canon();
+                let i2 = n.get_type(&info).unify(r)?;
+                let info = info.compose(i2).canon();
                 let s = env.generalize(n.apply(&info), &info);
                 env.global.insert(Arg::Ident(i.clone()), s.get_type(&info));
                 Ok((i, (info, s)))
@@ -1365,16 +1379,20 @@ pub fn infer(
         &NodeDS::Let(ref i, ref b, ref e) => {
             let mut env = env.clone();
 
-            // let tmp = next.next_t();
-            // env.0.insert(Arg::Ident(i.clone()), Scheme::Type(tmp.clone()));
+            //let tmp = next.next_t();
+            //env.global.insert(Arg::Ident(i.clone()), Scheme::Type(tmp.clone()));
 
             let (s1, tb) = infer(b, &mut env, next)?;
-            // println!("{:?} ({:?})", t1, s1);
-            // let sb = s1.compose(tmp.unify(t1.clone())?);
+
+            //let t = tb.get_type(&s1);
+            //let sb = s1.compose(tmp.unify(t)?);
             let sb = s1;
+            //env = env.apply(&sb);
             let t = env.clone().apply(&sb).generalize(tb, &sb);
 
-            env.local.insert(Arg::Ident(i.clone()), t.get_type(&sb));
+            //env.local.insert(Arg::Ident(i.clone()), t.get_type(&sb));
+            //let v = env.global.remove(i);
+            //env.local.insert()
 
             env = env.apply(&sb);
 

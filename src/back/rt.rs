@@ -27,17 +27,27 @@ pub fn build_rt<'a>(
 
     let add = m.new_function("llvm_add_int64", unsafe { LLVMGetElementType(ll_type) })
         .unwrap();
+    let sub = m.new_function("llvm_sub_int64", unsafe { LLVMGetElementType(ll_type) })
+        .unwrap();
+    let mul = m.new_function("llvm_mul_int64", unsafe { LLVMGetElementType(ll_type) })
+        .unwrap();
     let div = m.new_function("llvm_div_int64", unsafe { LLVMGetElementType(ll_type) })
         .unwrap();
 
     add.set_linkage(LLVMLinkage::LLVMInternalLinkage);
+    sub.set_linkage(LLVMLinkage::LLVMInternalLinkage);
+    mul.set_linkage(LLVMLinkage::LLVMInternalLinkage);
     div.set_linkage(LLVMLinkage::LLVMInternalLinkage);
 
     int_binop(LLVMBuildAdd, &add, &b);
+    int_binop(LLVMBuildSub, &sub, &b);
+    int_binop(LLVMBuildMul, &mul, &b);
     int_binop(LLVMBuildSDiv, &div, &b);
 
     vec![
         (Arg::Ident(String::from("llvm_add_int64")), t.clone(), *add),
+        (Arg::Ident(String::from("llvm_sub_int64")), t.clone(), *sub),
+        (Arg::Ident(String::from("llvm_mul_int64")), t.clone(), *mul),
         (Arg::Ident(String::from("llvm_div_int64")), t, *div),
     ]
 }

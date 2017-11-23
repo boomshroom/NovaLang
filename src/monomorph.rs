@@ -58,7 +58,8 @@ impl Module {
 
             let (name, ty) = item;
             match name.as_str() {
-                "llvm_add_int64" | "llvm_div_int64" => {} // Builtin
+                // Builtin
+                "llvm_add_int64" | "llvm_sub_int64" | "llvm_mul_int64" | "llvm_div_int64" => {}
                 _ => {
                     let n = defns.get(&name).expect(
                         format!(
