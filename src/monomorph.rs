@@ -1,4 +1,4 @@
-use super::w_ds::{TypedNode, TypedMod, Type, TypeInfo, TId, Types, Scheme, EnumDecl};
+use super::types::{TypedNode, TypedMod, Type, TypeInfo, TId, Types, Scheme, EnumDecl};
 use super::desugar::{Arg, Pat};
 use std::iter::once;
 use std::collections::{HashSet, HashMap};
@@ -244,19 +244,5 @@ impl Node {
             }
             Node::Constr(ref a, _, _) => a.iter().flat_map(Node::free_vars).collect(),
         }
-    }
-
-    pub fn type_vars(&self) -> HashSet<TId> {
-        &self.get_type().ftv() |
-            &match *self {
-                Node::Lit(_) | Node::Var(_, _) => HashSet::new(),
-                Node::Abs(_, ref b, _, _) => b.type_vars(),
-                Node::App(ref f, ref a) => &f.type_vars() | &a.type_vars(),
-                Node::Let(_, ref e, ref b) => &e.type_vars() | &b.type_vars(),
-                Node::Match(ref a, ref arms, _) => {
-                    &a.type_vars() | &arms.iter().flat_map(|&(_, ref b)| b.type_vars()).collect()
-                }
-                Node::Constr(ref a, _, _) => a.iter().flat_map(Node::type_vars).collect(),
-            }
     }
 }

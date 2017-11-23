@@ -10,7 +10,7 @@ use std::convert::AsMut;
 use std::collections::hash_map::{HashMap, DefaultHasher};
 use std::hash::{Hash, Hasher};
 
-use super::super::w_ds::{Type, TypeInfo, Types, Scheme, EnumDecl};
+use super::super::types::{Type, TypeInfo, Types, Scheme, EnumDecl};
 
 macro_rules! dispose {
 	($t:ident, $f:ident) => (impl Drop for $t {

@@ -1,5 +1,5 @@
 use super::wrap::{Context, Module, Function, Builder};
-use super::super::w_ds::{Type, Scheme, EnumDecl};
+use super::super::types::{Type, Scheme, EnumDecl};
 use super::super::desugar::Arg;
 use llvm_sys::prelude::*;
 use llvm_sys::core::*;

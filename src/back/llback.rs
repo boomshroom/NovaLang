@@ -1,7 +1,7 @@
 use super::wrap::{self, Context, Module, Builder, Function};
 use super::rt::build_rt;
 use super::super::desugar::{Pat, Arg};
-use super::super::w_ds::{Type, EnumDecl, Scheme, Types, TypeInfo};
+use super::super::types::{Type, EnumDecl, Scheme, Types, TypeInfo};
 use super::super::monomorph::{self, Node};
 use llvm_sys::prelude::*;
 use llvm_sys::core::*;
@@ -753,49 +753,4 @@ impl<'a> Compiler<'a> {
             .map(|t| self.ll_type(t))
             .collect::<Vec<_>>())
     }
-
-    // fn zero_for_type(&self, t: &Type) -> LLVMValueRef {
-    // match *t {
-    // Type::Int => unsafe { LLVMConstInt(self.ctx.int_type(64), 0, 1) },
-    // Type::Bool => unsafe { LLVMConstInt(self.ctx.int_type(1), 0, 0) },
-    // Type::Unit => unsafe { LLVMConstStruct(null(), 0, 0) },
-    // Type::Tuple(ref ts) => {
-    // let mut vs: Vec<_> = ts.iter().map(|t| self.zero_for_type(t)).collect();
-    // unsafe { LLVMConstStruct(vs.as_mut_ptr(), vs.len() as u32, 0) }
-    // }
-    // Type::Func(ref a, ref r) => unsafe {
-    // LLVMConstNull(LLVMPointerType(
-    // LLVMFunctionType(
-    // self.ll_type(r),
-    // &mut self.ll_type(a) as *mut _,
-    // 1,
-    // 0,
-    // ),
-    // 0,
-    // ))
-    // },
-    // Type::Closure(ref a, ref r, ref c) => {
-    // let mut vs: Vec<_> = c.iter().map(|t| self.zero_for_type(t)).collect();
-    // let cap = unsafe { LLVMConstStruct(vs.as_mut_ptr(), vs.len() as u32, 0) };
-    // let mut args = [unsafe { LLVMTypeOf(cap) }, self.ll_type(a)];
-    // let f_ptr = unsafe {
-    // LLVMConstNull(LLVMPointerType(
-    // LLVMFunctionType(
-    // self.ll_type(r),
-    // args.as_mut_ptr(),
-    // args.len() as u32,
-    // 0,
-    // ),
-    // 0,
-    // ))
-    // };
-    // let mut closure = [f_ptr, cap];
-    // unsafe { LLVMConstStruct(closure.as_mut_ptr(), closure.len() as u32, 0) }
-    // }
-    // Type::Free(_) => unreachable!(),
-    // Type::Ptr(ref t) => unsafe { LLVMConstNull(LLVMPointerType(self.zero_for_type(t))) },
-    // Type::Alias(_) => panic!("Not yet implemented");
-    // }
-    // }
-    //
 }
