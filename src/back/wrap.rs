@@ -93,6 +93,9 @@ impl Context {
         structs: &mut HashMap<(String, Vec<Type>), LLVMTypeRef>,
         target: LLVMTargetDataRef,
     ) -> LLVMTypeRef {
+        if t.ftv().len() != 0 {
+            eprintln!("Type variables found: {:?}", t);
+        }
         match *t {
             Type::Int => self.int_type(64),
             Type::Int8 => self.int_type(8),
@@ -135,9 +138,9 @@ impl Context {
                 self.tuple_type(&mut [f_ty, cap])
             }
             Type::Free(id) => {
-                eprintln!("Free type made to compilation: {:?}", id);
+                panic!("Free type made to compilation: {:?}", id);
                 //unsafe { LLVMVoidTypeInContext(**self) }
-                self.int_type(64)
+                //self.int_type(64)
             }
             Type::Ptr(ref t) => unsafe {
                 LLVMPointerType(self.ll_type(&**t, types, structs, target), 0)
@@ -178,7 +181,8 @@ impl Context {
                             .into_iter()
                             .zip(ty_args.iter().map(|&(id, _)| Type::Free(id)))
                             .map(|(t1, t2)| t1.unify(t2).unwrap())
-                            .fold(TypeInfo::new(), |i1, i2| i1.compose(i2)));
+                            .fold(TypeInfo::new(), |i1, i2| i1.compose(i2))
+                            .canon());
                         e.0
                     }
                     None => panic!("Undefined declared type."),
@@ -288,7 +292,6 @@ impl<'a> Module<'a> {
 impl<'a> Function<'a> {
     pub fn append_bb<T: Into<Vec<u8>>>(&self, name: T) -> Result<BasicBlock<'a>, NulError> {
         let name = CString::new(name)?;
-        // eprintln!("{:?}", name);
         Ok(BasicBlock(
             unsafe {
                 LLVMAppendBasicBlockInContext((self.1).0, self.0, name.as_ptr())

@@ -736,6 +736,13 @@ impl TypeInfo {
         }
     }
 
+    pub fn from_subst(subst: HashMap<TId, Type>) -> TypeInfo {
+        TypeInfo {
+            subst: subst,
+            constr: HashMap::new(),
+        }
+    }
+
     pub fn compose(self, other: TypeInfo) -> TypeInfo {
         let TypeInfo {
             subst: s,
@@ -811,7 +818,7 @@ impl TypeInfo {
         s
     }
 
-    fn canon(&self) -> TypeInfo {
+    pub fn canon(&self) -> TypeInfo {
         let TypeInfo {
             ref subst,
             ref constr,

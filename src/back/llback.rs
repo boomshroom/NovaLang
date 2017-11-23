@@ -1,7 +1,7 @@
 use super::wrap::{self, Context, Module, Builder, Function};
 use super::rt::build_rt;
 use super::super::desugar::{Pat, Arg};
-use super::super::w_ds::{Type, EnumDecl, Scheme};
+use super::super::w_ds::{Type, EnumDecl, Scheme, Types, TypeInfo};
 use super::super::monomorph::{self, Node};
 use llvm_sys::prelude::*;
 use llvm_sys::core::*;
@@ -82,7 +82,7 @@ pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
 
     vars.extend(defns
         .iter()
-        .map(|&(ref name, ref ty, _)| {
+        .map(|&(ref name, ref ty, ref n)| {
             // let ll_name = if name.as_str() == "main" && ty == Type::Func(
             // Box::new(Type::Tuple(vec![
             // Type::Int,
@@ -94,6 +94,10 @@ pub fn compile(m: monomorph::Module) -> Result<String, NulError> {
             // } else {
             // c.next()
             // };
+            /*let ftv = &ty.ftv() | &n.type_vars();
+            if ftv.len() != 0 {
+                eprintln!("Free vals found in {}.\n{:?}", name, ftv);
+            }*/
             let ll_type = ctx.ll_type(ty, &types, &mut structs, data_layout);
             let g = unsafe {
                 LLVMAddGlobal(
@@ -292,7 +296,6 @@ impl<'a> Compiler<'a> {
         match cap.len() {
             0 => {
                 let ty = Type::Func(Box::new(arg.clone()), Box::new(b.get_type()));
-                // eprintln!("Genning function. ({:?})", ty);
                 let ll_type = self.ll_type(&ty);
 
                 /*let f_obj = unsafe {
@@ -305,9 +308,7 @@ impl<'a> Compiler<'a> {
                     .unwrap();
                 assert!(!f_obj.is_null(), "Function is null");
                 f_obj.set_linkage(LLVMLinkage::LLVMInternalLinkage);
-                //eprintln!("{:?}", unsafe { LLVMGetTypeKind(LLVMTypeOf(*f_obj)) });
-                // assert_eq!(, );
-                // let f_obj = self.lmod.new_function("", ll_type).unwrap();
+
                 let f_obj = {
                     let mut new_ctx = Compiler {
                         ctx: self.ctx,
@@ -461,7 +462,6 @@ impl<'a> Compiler<'a> {
     }
 
     fn lookup(&mut self, i: Arg, t: Type) -> LLVMValueRef {
-        // eprintln!("{:?}", i);
         for &(ref a, ref ty, v) in self.vars.iter().chain(self.globals.iter()).rev() {
             if a == &i && ty.clone().unify(t.clone()).is_ok() {
                 assert!(!v.is_null(), "Value stored as null.");
@@ -555,8 +555,16 @@ impl<'a> Compiler<'a> {
                     t => panic!("Not ADT passed to match: {:?}", t),
                 };
                 let cons = match self.types.get(name) {
-                    Some(&Scheme::Type(EnumDecl(ref cons))) => cons,
-                    Some(&Scheme::Forall(EnumDecl(ref cons), _)) => cons,
+                    Some(&Scheme::Type(EnumDecl(ref cons))) => cons.clone(),
+                    Some(&Scheme::Forall(ref cons, ref ids)) => {
+                        let info = TypeInfo::from_subst(
+                            ids.iter()
+                                .map(|&(id, _)| id)
+                                .zip(type_args.clone())
+                                .collect(),
+                        );
+                        cons.clone().apply(&info).0
+                    }
                     None => panic!("ADT undefined: {}", name),
                 };
                 let (variant, mut adt_args) =
@@ -571,6 +579,7 @@ impl<'a> Compiler<'a> {
                     adt_args.len(),
                     "Incorrect number of arguments to constructor."
                 );
+
                 let arg = match cons.len() {
                     1 => unsafe {
                         LLVMBuildExtractValue(*self.build, arg, 0, self.counter.next().as_ptr())
@@ -609,6 +618,7 @@ impl<'a> Compiler<'a> {
                                     *self.build,
                                     ptr,
                                     LLVMPointerType(self.tuple_type(&mut adt_args), 0),
+                                    //LLVMPointerType(self.tuple_type(), 0),
                                     self.counter.next().as_ptr(),
                                 ),
                                 self.counter.next().as_ptr(),
@@ -658,8 +668,14 @@ impl<'a> Compiler<'a> {
                 Some(&Scheme::Forall(EnumDecl(ref adt), _)) => adt,
                 None => panic!("Undefined enum: {}", i),
             };
+
             let (_, ref ts) = adt[variant as usize];
-            let var_type = self.tuple_type(&mut ts.clone());
+            let var_type = self.tuple_type(
+                args.iter()
+                    .map(|n| n.get_type())
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+            );
             let var_struct = args.into_iter().enumerate().fold(
                 unsafe {
                     LLVMGetUndef(var_type)
