@@ -34,8 +34,6 @@ impl Module {
         let defns = defns.into_iter().collect::<HashMap<_, _>>();
         let mut new_defns = Vec::with_capacity(defns.len());
 
-        //eprintln!("{:?}", defns);
-
         let mut stack = Vec::new();
         stack.push((
             String::from("main"),
@@ -60,7 +58,7 @@ impl Module {
 
             let (name, ty) = item;
             match name.as_str() {
-                "llvm_add_int64" => {} // Builtin
+                "llvm_add_int64" | "llvm_div_int64" => {} // Builtin
                 _ => {
                     let n = defns.get(&name).expect(
                         format!(
@@ -190,7 +188,7 @@ impl Node {
                     )
                 }
             }
-            Node::App(ref f, _) => f.get_ret_type().unwrap_or(Type::Free(TId::new())),
+            Node::App(ref f, _) => f.get_ret_type().expect("Non function in application."),
             Node::Let(_, _, ref b) => b.get_type(),
             Node::Match(_, _, ref b) => b.clone(),
             Node::Constr(_, ref t, _) => t.clone(),
@@ -201,10 +199,7 @@ impl Node {
         match self.get_type() {
             Type::Func(_, b) => Some(*b),
             Type::Closure(_, b, _) => Some(*b),
-            t => {
-                eprintln!("{:?}", t);
-                None
-            }
+            t => None,
         }
     }
 

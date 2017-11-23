@@ -223,15 +223,21 @@ impl TypedMod {
             local: HashMap::new(),
         };
 
+        let int_binop_ty = Scheme::Type(Type::Func(
+            Box::new(Type::Alias(
+                String::from("Tuple"),
+                vec![Type::Int, Type::Int],
+            )),
+            Box::new(Type::Int),
+        ));
+
         env.global.insert(
             Arg::Ident(String::from("llvm_add_int64")),
-            Scheme::Type(Type::Func(
-                Box::new(Type::Alias(
-                    String::from("Tuple"),
-                    vec![Type::Int, Type::Int],
-                )),
-                Box::new(Type::Int),
-            )),
+            int_binop_ty.clone(),
+        );
+        env.global.insert(
+            Arg::Ident(String::from("llvm_div_int64")),
+            int_binop_ty.clone(),
         );
 
         // Topo-sort to minimize out-of-order typechecking.

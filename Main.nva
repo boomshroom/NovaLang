@@ -5,10 +5,16 @@ data Maybe a = Just a | Nothing
 
 add a b = llvm_add_int64 (Tuple a b)
 
+div a b = llvm_div_int64 (Tuple a b)
+
+checkedDiv a b = (case b of 0 -> Nothing; n -> Just (div a n))
+
 map f a = ( case a of Just b -> Just (f b); Nothing -> Nothing )
 
 maybeAdd a = map (add a)
 
 orDefault d a = ( case a of Just b -> b; Nothing -> d )
 
-main (Tuple n _) = orDefault 1 (maybeAdd 3 (maybeAdd n (Just 7)))
+bind f m = (case m of Just b -> f b; Nothing -> Nothing)
+
+main (Tuple n _) = orDefault 1 (bind (checkedDiv 2) (bind (checkedDiv 6) (Just 0)))
