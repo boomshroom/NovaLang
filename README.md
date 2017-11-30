@@ -8,7 +8,7 @@ functional programming to the systems programming domain.
 Syntax is largely derived from Haskell with many restrictions.
 
 Memory safety is planned to be maintained through the use of
-linear types as opposed to a grabage collector.
+linear types as opposed to a garbage collector.
 
 ## Purpose
 
