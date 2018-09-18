@@ -1,3 +1,5 @@
+# This project is abandoned. Please see [Pikelet](https://github.com/pikelet-lang/pikelet) for the same idea, but cleaner code and more defined semantics.
+
 # Nova Programming Language
 
 (Name not finalized)
